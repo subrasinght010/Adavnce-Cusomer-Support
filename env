@@ -1,0 +1,141 @@
+# Server
+SECRET_KEY=your_super_secret_key_change_this
+JWT_ALGORITHM=HS256
+HOST=0.0.0.0
+PORT=8080
+
+# Database
+DATABASE_URL=sqlite+aiosqlite:///./mydatabase.db
+
+# Company Info
+COMPANY_NAME=TechCorp
+SUPPORT_NUMBER=+1-800-TECHCORP
+
+# LLM Configuration
+USE_OLLAMA=true  # Set to false to use Transformers
+LLM_MODEL=mistral  # For Ollama OR mistralai/Mistral-7B-Instruct-v0.2 for Transformers
+LLM_DEVICE=cpu  # or cuda
+LLM_MAX_TOKENS=512
+LLM_TEMPERATURE=0.7
+
+# STT (Whisper)
+WHISPER_MODEL=medium
+WHISPER_LANGUAGE=en
+
+# TTS
+TTS_ENGINE=pyttsx3
+TTS_RATE=150
+
+# Email (SendGrid)
+SENDGRID_API_KEY=SG.your_sendgrid_api_key_here
+FROM_EMAIL=support@techcorp.com
+
+# SMS & WhatsApp (Twilio)
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_PHONE_NUMBER=+1234567890
+TWILIO_WHATSAPP_NUMBER=whatsapp:+1234567890
+
+# RAG Configuration
+RAG_ENABLED=true
+RAG_TOP_K=3
+RAG_RELEVANCE_THRESHOLD=0.7
+KNOWLEDGE_BASE_DIR=./knowledge_base
+CHROMA_DB_DIR=./chroma_db
+
+# Email Templates
+EMAIL_TEMPLATES_DIR=./templates/email
+
+
+# Server
+SECRET_KEY=your_super_secret_key_change_this_in_production
+JWT_ALGORITHM=HS256
+HOST=0.0.0.0
+PORT=8080
+
+# Database
+DATABASE_URL=sqlite+aiosqlite:///./mydatabase.db
+
+# Company Info
+COMPANY_NAME=TechCorp
+SUPPORT_NUMBER=+1-800-TECHCORP
+FROM_EMAIL=support@techcorp.com
+
+# LLM Configuration
+USE_OLLAMA=true
+LLM_MODEL=mistral
+LLM_DEVICE=cpu
+LLM_MAX_TOKENS=512
+LLM_TEMPERATURE=0.7
+
+# STT (Whisper)
+WHISPER_MODEL=medium
+WHISPER_LANGUAGE=en
+
+# TTS
+TTS_ENGINE=pyttsx3
+TTS_RATE=150
+
+# Email Service (SendGrid)
+SENDGRID_API_KEY=SG.your_sendgrid_api_key_here
+
+# Email Monitoring (IMAP)
+EMAIL_IMAP_SERVER=imap.gmail.com
+EMAIL_IMAP_PORT=993
+EMAIL_USERNAME=your_email@gmail.com
+EMAIL_PASSWORD=your_app_password_or_oauth_token
+EMAIL_CHECK_INTERVAL=30
+
+# SMS & WhatsApp (Twilio)
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_PHONE_NUMBER=+1234567890
+TWILIO_WHATSAPP_NUMBER=whatsapp:+1234567890
+
+# RAG Configuration
+RAG_ENABLED=true
+RAG_TOP_K=3
+RAG_RELEVANCE_THRESHOLD=0.7
+KNOWLEDGE_BASE_DIR=./knowledge_base
+CHROMA_DB_DIR=./chroma_db
+
+# Worker Configuration
+ENABLE_EMAIL_WORKER=true
+ENABLE_FOLLOWUP_WORKER=true
+ENABLE_CALLBACK_WORKER=false
+
+# Follow-up Settings
+FOLLOWUP_CHECK_INTERVAL=300
+FOLLOWUP_EMAIL_DELAY=86400
+FOLLOWUP_SMS_DELAY=172800
+FOLLOWUP_WHATSAPP_DELAY=259200
+FOLLOWUP_MAX_ATTEMPTS=3
+
+# Message Queue (Optional - for high traffic)
+USE_MESSAGE_QUEUE=false
+QUEUE_MAX_SIZE=1000
+
+# Retry Settings
+MAX_RETRY_ATTEMPTS=3
+RETRY_DELAY=60
+
+# Delivery Tracking
+TRACK_EMAIL_OPENS=false
+TRACK_LINK_CLICKS=false
+
+# Debug Mode
+DEBUG=false
+LOG_LEVEL=INFO
+
+
+# Twilio Credentials
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_PHONE_NUMBER=+1234567890
+
+# Your Server URL (for webhooks)
+BASE_URL=https://yourdomain.com
+
+# Optional: Voice Settings
+TWILIO_VOICE=Polly.Joanna
+TWILIO_LANGUAGE=en-US
