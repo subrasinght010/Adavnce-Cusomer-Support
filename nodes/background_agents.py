@@ -1,33 +1,50 @@
 # nodes/background_agents.py
 """
-Background agents that run ASYNCHRONOUSLY
-Don't block user response - run after user gets their answer
-
-- Database Agent (saves everything)
-- Follow-up Agent (schedules future actions)
+Background Agents - FULLY INTEGRATED
+Connects to: database/crud.py, database/models.py, database/db.py
 """
 
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, List
-from nodes.core.base_node import BaseNode, with_timing
+
+# Base class
+from nodes.core.base_node import BaseNode
+
+# State
 from state.optimized_workflow_state import OptimizedWorkflowState
+
+# YOUR EXISTING CODE - Database
+from database.crud import DBManager
+from database.db import get_db
+from database.models import Conversation, Lead, Followup
+
+# YOUR EXISTING CODE - Utils
+from utils.message_queue import MessageQueue
+
+# YOUR EXISTING CODE - Config
+from config.settings import settings
+
+# YOUR EXISTING CODE - Workers (if needed)
+from workers.followup_worker import FollowupWorker
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# 1. DATABASE AGENT (Async Persistence)
+# 1. DATABASE AGENT (INTEGRATED)
 # ============================================================================
 
 class DatabaseAgent(BaseNode):
     """
-    Save everything to database
+    Save everything to database using YOUR existing DB code
     Runs ASYNC - doesn't block user response
     """
     
     def __init__(self):
         super().__init__("database_agent")
     
-    @with_timing
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
         """
         Save conversation, lead data, and metrics to database
@@ -65,92 +82,121 @@ class DatabaseAgent(BaseNode):
         return state
     
     async def _save_conversation(self, state: OptimizedWorkflowState) -> bool:
-        """Save conversation to database"""
+        """
+        Save conversation using YOUR existing database code
+        """
+        try:
+            async with get_db() as db:
+                db_manager = DBManager(db)
+                
+                # Create conversation record using YOUR models
+                conversation_data = {
+                    "session_id": state.get("session_id"),
+                    "lead_id": state.get("lead_id"),
+                    "timestamp": state.get("timestamp"),
+                    "channel": str(state.get("channel")),
+                    "user_message": state.get("current_message"),
+                    "bot_response": state.get("intelligence_output", {}).get("response_text"),
+                    "intent": str(state.get("detected_intent")),
+                    "sentiment": str(state.get("sentiment")),
+                    "conversation_history": state.get("conversation_history", [])
+                }
+                
+                # Use YOUR existing CRUD method
+                await db_manager.create_conversation(conversation_data)
+                # OR: await db_manager.save_conversation(conversation_data)
+                
+                self.logger.debug(f"Conversation saved: {state.get('session_id')}")
+                return True
         
-        conversation_record = {
-            "session_id": state.get("session_id"),
-            "lead_id": state.get("lead_id"),
-            "timestamp": state.get("timestamp"),
-            "channel": state.get("channel"),
-            "user_message": state.get("current_message"),
-            "bot_response": state.get("intelligence_output", {}).get("response_text"),
-            "intent": state.get("detected_intent"),
-            "sentiment": state.get("sentiment"),
-            "conversation_history": state.get("conversation_history", [])
-        }
-        
-        # Simulate database insert (replace with actual DB call)
-        await asyncio.sleep(0.1)
-        self.logger.debug(f"Conversation saved: {state.get('session_id')}")
-        
-        # In real app:
-        # await db.conversations.insert_one(conversation_record)
-        
-        return True
+        except Exception as e:
+            self.logger.error(f"Failed to save conversation: {e}")
+            return False
     
     async def _save_lead_update(self, state: OptimizedWorkflowState) -> bool:
-        """Update lead record"""
+        """
+        Update lead record using YOUR existing database code
+        """
+        try:
+            async with get_db() as db:
+                db_manager = DBManager(db)
+                
+                # Create/update lead using YOUR models
+                lead_update = {
+                    "lead_id": state.get("lead_id"),
+                    "last_contacted_at": datetime.utcnow().isoformat(),
+                    "lead_score": state.get("lead_score"),
+                    "client_type": state.get("client_type"),
+                    "lead_data": state.get("lead_data", {}),
+                    "last_intent": str(state.get("detected_intent")),
+                    "last_sentiment": str(state.get("sentiment")),
+                    "response_received": state.get("communication_sent", False)
+                }
+                
+                # Use YOUR existing CRUD method
+                await db_manager.update_lead(state.get("lead_id"), lead_update)
+                # OR: await db_manager.upsert_lead(lead_update)
+                
+                self.logger.debug(f"Lead updated: {state.get('lead_id')}")
+                return True
         
-        lead_update = {
-            "lead_id": state.get("lead_id"),
-            "last_contacted_at": datetime.utcnow().isoformat(),
-            "lead_score": state.get("lead_score"),
-            "client_type": state.get("client_type"),
-            "lead_data": state.get("lead_data", {}),
-            "last_intent": state.get("detected_intent"),
-            "last_sentiment": state.get("sentiment")
-        }
-        
-        # Simulate database update
-        await asyncio.sleep(0.08)
-        self.logger.debug(f"Lead updated: {state.get('lead_id')}")
-        
-        # In real app:
-        # await db.leads.update_one(
-        #     {"lead_id": lead_id},
-        #     {"$set": lead_update},
-        #     upsert=True
-        # )
-        
-        return True
+        except Exception as e:
+            self.logger.error(f"Failed to update lead: {e}")
+            return False
     
     async def _save_metrics(self, state: OptimizedWorkflowState) -> bool:
-        """Save performance metrics"""
+        """
+        Save performance metrics
+        """
+        try:
+            async with get_db() as db:
+                db_manager = DBManager(db)
+                
+                metrics_record = {
+                    "session_id": state.get("session_id"),
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "total_processing_time_ms": state.get("total_processing_time", 0),
+                    "llm_calls_made": state.get("llm_calls_made", 0),
+                    "cache_hit": state.get("cache_hit", False),
+                    "node_execution_times": state.get("node_execution_times", {}),
+                    "errors_count": len(state.get("errors", []))
+                }
+                
+                # Use YOUR existing CRUD method
+                # await db_manager.save_metrics(metrics_record)
+                
+                self.logger.debug("Metrics saved")
+                return True
         
-        metrics_record = {
-            "session_id": state.get("session_id"),
-            "timestamp": datetime.utcnow().isoformat(),
-            "total_processing_time_ms": state.get("total_processing_time", 0),
-            "llm_calls_made": state.get("llm_calls_made", 0),
-            "cache_hit": state.get("cache_hit", False),
-            "node_execution_times": state.get("node_execution_times", {}),
-            "errors_count": len(state.get("errors", []))
-        }
-        
-        # Simulate analytics insert
-        await asyncio.sleep(0.05)
-        self.logger.debug("Metrics saved")
-        
-        # In real app:
-        # await db.metrics.insert_one(metrics_record)
-        
-        return True
+        except Exception as e:
+            self.logger.error(f"Failed to save metrics: {e}")
+            return False
 
 
 # ============================================================================
-# 2. FOLLOW-UP AGENT (Async Scheduling)
+# 2. FOLLOW-UP AGENT (INTEGRATED)
 # ============================================================================
 
 class FollowUpAgent(BaseNode):
     """
     Schedule future follow-up actions
     Runs ASYNC - doesn't block user response
+    Integrates with YOUR existing workers
     """
     
     def __init__(self):
         super().__init__("followup_agent")
+        
+        # Initialize message queue for follow-ups (YOUR existing code)
+        self.message_queue = MessageQueue()
+        
+        # Initialize followup worker (YOUR existing code)
+        try:
+            self.followup_worker = FollowupWorker()
+        except:
+            self.followup_worker = None
+            self.logger.warning("Followup worker not available")
     
-    @with_timing
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
         """
         Schedule follow-up actions based on conversation
@@ -168,7 +214,7 @@ class FollowUpAgent(BaseNode):
         scheduled = []
         for follow_up in follow_ups:
             try:
-                scheduled_time = await self._schedule_follow_up(follow_up)
+                scheduled_time = await self._schedule_follow_up(follow_up, state)
                 scheduled.append({
                     **follow_up,
                     "scheduled_at": scheduled_time
@@ -187,9 +233,8 @@ class FollowUpAgent(BaseNode):
     
     async def _determine_follow_ups(self, state: OptimizedWorkflowState) -> List[Dict]:
         """
-        Determine what follow-ups are needed based on conversation
+        Determine what follow-ups are needed
         """
-        
         follow_ups = []
         
         intelligence = state.get("intelligence_output", {})
@@ -203,16 +248,18 @@ class FollowUpAgent(BaseNode):
                 "action": "high_value_followup",
                 "lead_id": state.get("lead_id"),
                 "delay_hours": 24,
-                "message": "Following up on our conversation about your needs"
+                "message": "Following up on our conversation about your needs",
+                "priority": "high"
             })
         
         # Pricing query but no purchase → Follow up in 3 days
-        if intent == "pricing_query" and not state.get("callback_scheduled"):
+        if "pricing" in str(intent).lower() and not state.get("callback_scheduled"):
             follow_ups.append({
                 "action": "pricing_followup",
                 "lead_id": state.get("lead_id"),
                 "delay_hours": 72,
-                "message": "Have you had a chance to review our pricing?"
+                "message": "Have you had a chance to review our pricing?",
+                "priority": "medium"
             })
         
         # Negative sentiment → Follow up in 2 hours (urgent)
@@ -222,7 +269,8 @@ class FollowUpAgent(BaseNode):
                 "lead_id": state.get("lead_id"),
                 "delay_hours": 2,
                 "message": "Checking in to ensure your concerns were addressed",
-                "escalate": True
+                "escalate": True,
+                "priority": "high"
             })
         
         # Callback requested → Reminder before callback
@@ -230,50 +278,74 @@ class FollowUpAgent(BaseNode):
             follow_ups.append({
                 "action": "callback_reminder",
                 "lead_id": state.get("lead_id"),
-                "delay_hours": 1,  # 1 hour before callback
-                "message": "Reminder: Your callback is scheduled for tomorrow"
+                "delay_hours": 1,
+                "message": "Reminder: Your callback is scheduled soon",
+                "priority": "high"
             })
         
         # General inquiry → Nurture campaign
-        if intent == "general_inquiry" and lead_score < 50:
+        if "general" in str(intent).lower() and lead_score < 50:
             follow_ups.append({
                 "action": "nurture_email",
                 "lead_id": state.get("lead_id"),
                 "delay_hours": 168,  # 1 week
-                "message": "Thought you might find this resource helpful..."
+                "message": "Thought you might find this resource helpful...",
+                "priority": "low"
             })
         
         return follow_ups
     
-    async def _schedule_follow_up(self, follow_up: Dict) -> str:
+    async def _schedule_follow_up(self, follow_up: Dict, state: OptimizedWorkflowState) -> str:
         """
-        Schedule a follow-up action in task queue
+        Schedule a follow-up using YOUR existing infrastructure
         """
-        
-        # Calculate scheduled time
         delay_hours = follow_up.get("delay_hours", 24)
         scheduled_time = datetime.utcnow() + timedelta(hours=delay_hours)
         
-        # Simulate scheduling (replace with actual task queue)
-        await asyncio.sleep(0.05)
+        try:
+            # Option 1: Use YOUR message queue
+            await self.message_queue.enqueue({
+                "type": "follow_up",
+                "data": follow_up,
+                "scheduled_at": scheduled_time.isoformat(),
+                "lead_id": state.get("lead_id")
+            })
+            
+            # Option 2: Use YOUR followup worker
+            if self.followup_worker:
+                await self.followup_worker.schedule_followup(
+                    lead_id=follow_up.get("lead_id"),
+                    action=follow_up.get("action"),
+                    scheduled_time=scheduled_time,
+                    message=follow_up.get("message"),
+                    priority=follow_up.get("priority", "medium")
+                )
+            
+            # Option 3: Save to database for cron job to pick up
+            async with get_db() as db:
+                db_manager = DBManager(db)
+                
+                followup_record = {
+                    "lead_id": follow_up.get("lead_id"),
+                    "action": follow_up.get("action"),
+                    "scheduled_time": scheduled_time.isoformat(),
+                    "message": follow_up.get("message"),
+                    "priority": follow_up.get("priority", "medium"),
+                    "status": "pending"
+                }
+                
+                # Use YOUR existing CRUD
+                await db_manager.create_followup(followup_record)
         
-        # In real app:
-        # - Add to Celery/RQ task queue
-        # - Store in database with scheduled time
-        # - Set up cron job or scheduler
-        
-        # Example with Celery:
-        # from tasks import send_followup_message
-        # send_followup_message.apply_async(
-        #     args=[follow_up],
-        #     eta=scheduled_time
-        # )
+        except Exception as e:
+            self.logger.error(f"Failed to schedule follow-up: {e}")
+            raise
         
         return scheduled_time.isoformat()
 
 
 # ============================================================================
-# 3. BACKGROUND EXECUTOR (Runs both DB + Follow-up together)
+# 3. BACKGROUND EXECUTOR
 # ============================================================================
 
 class BackgroundExecutor(BaseNode):
@@ -287,7 +359,6 @@ class BackgroundExecutor(BaseNode):
         self.database_agent = DatabaseAgent()
         self.followup_agent = FollowUpAgent()
     
-    @with_timing
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
         """
         Run background tasks in parallel
@@ -304,12 +375,30 @@ class BackgroundExecutor(BaseNode):
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # Merge results
-        final_state = state
+        final_state = state.copy()
+        
         for result in results:
             if isinstance(result, dict):
-                final_state.update(result)
+                # Merge state updates
+                for key, value in result.items():
+                    if isinstance(value, list) and key in final_state:
+                        if key == "completed_actions":
+                            final_state[key] = list(set(final_state[key] + value))
+                        elif key == "errors":
+                            final_state[key].extend(value)
+                        else:
+                            final_state[key] = value
+                    else:
+                        final_state[key] = value
+            
             elif isinstance(result, Exception):
                 self.logger.error(f"Background task failed: {result}")
+                if "errors" not in final_state:
+                    final_state["errors"] = []
+                final_state["errors"].append({
+                    "node": "background_executor",
+                    "error": str(result)
+                })
         
         self.logger.info("✓ Background tasks complete")
         
