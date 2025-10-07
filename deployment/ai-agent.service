@@ -1,0 +1,42 @@
+[Unit]
+Description=AI Communication Agent
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/ai-agent
+Environment="PATH=/opt/ai-agent/.venv/bin"
+Environment="ENVIRONMENT=production"
+EnvironmentFile=/opt/ai-agent/.env
+
+# Main process
+ExecStart=/opt/ai-agent/.venv/bin/python main.py
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+# Resource limits
+LimitNOFILE=65536
+MemoryLimit=4G
+CPUQuota=200%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-agent
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ai-agent/audio_data /opt/ai-agent/chroma_db
+
+[Install]
+WantedBy=multi-user.target

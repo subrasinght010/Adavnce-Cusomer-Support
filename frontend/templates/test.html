@@ -1,0 +1,164 @@
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Interaction UI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/wavesurfer.js"></script>
+    <style>
+        body {
+            background-color: #1a1a2e;
+            color: white;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .waveform-container {
+            width: 100%;
+            height: 100px;
+        }
+        .btn {
+            padding: 12px 24px;
+            margin: 5px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        .btn:hover {
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body class="flex justify-center items-center min-h-screen">
+
+    <div class="container bg-gray-900 p-6 rounded-lg shadow-lg">
+        <h2 class="text-3xl font-semibold text-center mb-6">Voice Interaction</h2>
+        <div id="status" class="text-center text-lg mb-4 text-yellow-400">Status: Not Connected</div>
+
+        <!-- Client Section -->
+        <div class="flex flex-col items-center p-4 bg-gray-800 rounded-lg shadow-md mb-6">
+            <h3 class="font-semibold text-xl mb-4">Client</h3>
+            <div id="client-waveform" class="waveform-container mb-4"></div>
+            <div>
+                <button id="start-call" class="btn bg-green-500 text-white">Start Call</button>
+                <button id="mute-call" class="btn bg-yellow-500 text-white">Mute</button>
+                <button id="disconnect-call" class="btn bg-red-500 text-white">Disconnect</button>
+            </div>
+        </div>
+
+        <!-- Agent Section -->
+        <div class="flex flex-col items-center p-4 bg-gray-800 rounded-lg shadow-md">
+            <h3 class="font-semibold text-xl mb-4">Agent</h3>
+            <div id="agent-waveform" class="waveform-container mb-4"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket, mediaStream, isMuted = false;
+        const wssUrl = "wss://pvc66t9j-8080.inc1.devtunnels.ms/voice_chat"; // Replace with your actual WebSocket server
+
+        // Initialize Wavesurfer.js
+        const clientWaveform = WaveSurfer.create({
+            container: '#client-waveform',
+            waveColor: 'cyan',
+            progressColor: 'deepskyblue',
+            height: 100,
+            barWidth: 2
+        });
+
+        const agentWaveform = WaveSurfer.create({
+            container: '#agent-waveform',
+            waveColor: 'lime',
+            progressColor: 'green',
+            height: 100,
+            barWidth: 2
+        });
+
+        async function startCall() {
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                socket = new WebSocket(wssUrl);
+
+                socket.onopen = () => {
+                    console.log("WebSocket connected.");
+                    document.getElementById("status").innerHTML = "Status: <span class='text-green-500 font-semibold'>Connected</span>";
+                };
+
+                socket.onclose = () => {
+                    console.log("WebSocket disconnected.");
+                    document.getElementById("status").innerHTML = "Status: <span class='text-red-500 font-semibold'>Disconnected</span>";
+                };
+
+                socket.onerror = (error) => {
+                    console.error("WebSocket Error:", error);
+                    document.getElementById("status").innerHTML = "Status: <span class='text-red-500 font-semibold'>Error</span>";
+                };
+
+                // Handle incoming messages (Agent Response)
+                socket.onmessage = async (event) => {
+                    let audioBlob = new Blob([event.data], { type: "audio/wav" });
+                    let audioURL = URL.createObjectURL(audioBlob);
+                    agentWaveform.load(audioURL); // Update waveform
+                    const audio = new Audio(audioURL);
+                    audio.play();
+                };
+
+                // Capture real-time audio for the client
+                const audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                const analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                source.connect(analyser);
+
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                function detectAudio() {
+                    analyser.getByteFrequencyData(dataArray);
+                    const sum = dataArray.reduce((a, b) => a + b, 0);
+                    if (sum > 5000) {
+                        const audioBuffer = audioContext.createBuffer(1, dataArray.length, audioContext.sampleRate);
+                        audioBuffer.getChannelData(0).set(dataArray);
+                        clientWaveform.loadBuffer(audioBuffer); // Correct method to load real-time data
+                        socket.send(dataArray); // Send audio to WebSocket
+                    }
+                    requestAnimationFrame(detectAudio);
+                }
+
+                detectAudio();
+            } catch (error) {
+                console.error("Error accessing microphone:", error);
+            }
+        }
+
+        function muteCall() {
+            if (mediaStream) {
+                mediaStream.getAudioTracks()[0].enabled = !isMuted;
+                isMuted = !isMuted;
+            }
+        }
+
+        function disconnectCall() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                socket.close();
+                mediaStream = null;
+                clientWaveform.empty();
+                agentWaveform.empty();
+            }
+        }
+
+        document.getElementById('start-call').addEventListener('click', startCall);
+        document.getElementById('mute-call').addEventListener('click', muteCall);
+        document.getElementById('disconnect-call').addEventListener('click', disconnectCall);
+    </script>
+</body>
+</html>

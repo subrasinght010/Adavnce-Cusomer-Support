@@ -1,0 +1,93 @@
+Multi-Agent-System/
+│
+├── 🔄 main.py                         # MODIFY: Add new routes
+├── ⚠️ graph_builder.py                # TEMP: Delete after 2 weeks
+├── ✅ .env                            # KEEP
+├── ✅ .env.example                    # KEEP
+├── ✅ requirements.txt                # KEEP & UPDATE
+├── ✅ .gitignore                      # KEEP
+├── ✅ .dockerignore                   # KEEP
+├── ✅ README.md                       # KEEP & UPDATE
+│
+├── 🆕 state/
+│   ├── optimized_workflow_state.py   # NEW
+│   └── workflow_state.py             # TEMP: Delete after 2 weeks
+│
+├── nodes/
+│   ├── 🆕 core/
+│   │   └── base_node.py              # NEW
+│   │
+│   ├── 🆕 optimized_incoming_listener.py  # NEW
+│   ├── 🆕 unified_intelligence_agent.py   # NEW
+│   ├── 🆕 parallel_execution_agents.py    # NEW
+│   ├── 🆕 background_agents.py            # NEW
+│   │
+│   ├── ✅ stt_node.py                # KEEP & USE
+│   ├── ✅ tts_node.py                # KEEP & USE
+│   │
+│   └── ⚠️ OLD FILES (keep 2 weeks):
+│       ├── incoming_listener.py
+│       ├── intent_detector.py
+│       ├── knowledge_agent.py
+│       ├── communication_agent.py
+│       ├── schedule_call.py
+│       ├── verify_data.py
+│       ├── db_update.py
+│       └── follow_up.py
+│
+├── 🆕 graph_workflows/
+│   ├── __init__.py                   # NEW
+│   └── optimized_workflow.py         # NEW
+│
+├── ✅ tools/                          # KEEP & USE ALL
+│   ├── language_model.py
+│   ├── vector_store.py
+│   ├── stt.py
+│   └── tts.py
+│
+├── ✅ services/                       # KEEP & USE ALL
+│   ├── email_service.py
+│   ├── sms_service.py
+│   └── whatsapp_service.py
+│
+├── ✅ database/                       # KEEP & USE ALL
+│   ├── db.py
+│   ├── models.py
+│   ├── crud.py
+│   └── migrations/
+│       ├── alembic.ini
+│       └── versions/
+│
+├── ✅ utils/                          # KEEP ALL
+│   ├── audio.py
+│   ├── secure.py
+│   └── prompts.py
+│
+├── ✅ frontend/                       # KEEP ALL (no changes)
+│   ├── templates/
+│   │   ├── login.html
+│   │   ├── signup.html
+│   │   └── index.html
+│   └── static/
+│
+├── ✅ knowledge_base/                 # KEEP ALL
+│   └── (all documents)
+│
+├── ✅ chroma_db/                      # KEEP ALL
+│   └── (vector database)
+│
+├── ✅ deployment/                     # KEEP ALL
+│   ├── install.sh
+│   ├── ai-agent.service
+│   ├── nginx.conf
+│   ├── docker-compose.yml
+│   └── Dockerfile
+│
+├── ✅ scripts/                        # KEEP ALL
+│   ├── setup_rag.py
+│   ├── test_rag.py
+│   └── optimize_db.py
+│
+├── ✅ workers/ (if exists)            # KEEP ALL
+├── ✅ tests/ (if exists)              # KEEP ALL
+└── ✅ monitoring/ (if exists)         # KEEP ALL

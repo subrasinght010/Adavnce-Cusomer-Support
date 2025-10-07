@@ -1,0 +1,48 @@
+# ======================
+# Python bytecode/cache
+# ======================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ======================
+# Virtual environments
+# ======================
+env/
+venv/
+
+# ======================
+# Database
+# ======================
+mydatabase.db
+
+# ======================
+# Audio / data directories
+# ======================
+audio_data/
+cromadb/
+
+# ======================
+# Project-specific directories
+# ======================
+backend/ai_core/models/
+
+# ======================
+# IDE / Editor
+# ======================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.DS_Store
+
+# ======================
+# Logs / temp / build
+# ======================
+*.log
+logs/
+*.out
+dist/
+build/
+*.egg-info/

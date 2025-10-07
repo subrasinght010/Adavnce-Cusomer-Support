@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Voice Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/bundle.min.js"></script>
+  <style>
+    body {
+      background: radial-gradient(circle at top left, #0f0c29, #302b63, #24243e);
+      color: #e0e0e0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px 30px;
+      background-color: rgba(17, 24, 39, 0.8);
+      font-size: 1rem;
+      font-weight: 500;
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .circle-container {
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      height: 120px;
+      gap: 30px;
+      margin-top: 2rem;
+    }
+
+    .circle {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #00f5c9, #9c42f5);
+      box-shadow: 0 0 10px #00f5c9, 0 0 20px #9c42f5;
+      transition: transform 0.2s ease-in-out, opacity 0.2s;
+      transform: scale(1);
+      opacity: 0.4;
+    }
+
+    .circle.animate {
+      animation: pulse 1s infinite ease-in-out;
+      opacity: 1;
+    }
+
+    .circle:nth-child(2).animate { animation-delay: 0.1s; }
+    .circle:nth-child(3).animate { animation-delay: 0.2s; }
+    .circle:nth-child(4).animate { animation-delay: 0.3s; }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.8); }
+    }
+
+    .btn {
+      padding: 14px 28px;
+      border-radius: 9999px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      backdrop-filter: blur(10px);
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #fff;
+    }
+
+    .btn:hover:not(:disabled) {
+      transform: scale(1.05);
+      background: rgba(255,255,255,0.08);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: scale(1);
+    }
+
+    .start-btn { border-color: #00f5c9; }
+    .stop-btn { border-color: #f87171; }
+    .mute-btn { border-color: #fbbf24; }
+
+    h1 {
+      text-align: center;
+      font-size: 2rem;
+      margin-top: 2rem;
+      background: linear-gradient(to right, #00f5c9, #9c42f5);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      font-weight: bold;
+    }
+
+    .debug-info {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(17, 24, 39, 0.9);
+      padding: 15px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      border: 1px solid rgba(255,255,255,0.1);
+      max-width: 250px;
+    }
+
+    @media (max-width: 600px) {
+      .circle-container {
+        gap: 15px;
+      }
+      .btn {
+        padding: 10px 18px;
+        font-size: 0.9rem;
+      }
+      .debug-info {
+        font-size: 0.75rem;
+        padding: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="status-bar">
+    <div class="text-lg font-bold">👤 <span id="username">guest</span></div>
+  </div>
+
+  <div class="flex flex-col items-center justify-center min-h-[80vh] space-y-8">
+    <h1>🎧 Real-Time Voice Chat</h1>
+
+    <div class="flex gap-2 items-center">
+      <span id="status" class="text-green-400">Not Connected</span>
+    </div>
+
+    <div class="flex gap-4 flex-wrap justify-center">
+      <button id="start" class="btn start-btn">
+        <i data-lucide="phone-call" class="w-5 h-5"></i> Start
+      </button>
+      <button id="stop" class="btn stop-btn" disabled>
+        <i data-lucide="phone-off" class="w-5 h-5"></i> Stop
+      </button>
+      <button id="mute" class="btn mute-btn" disabled>
+        <i data-lucide="mic-off" class="w-5 h-5"></i> Mute
+      </button>
+    </div>
+
+    <div id="circle-container" class="circle-container">
+      <div class="circle" id="circle1"></div>
+      <div class="circle" id="circle2"></div>
+      <div class="circle" id="circle3"></div>
+      <div class="circle" id="circle4"></div>
+    </div>
+  </div>
+
+  <div class="debug-info">
+    <div><strong>Status:</strong> <span id="debug-status">Idle</span></div>
+    <div><strong>Buffer:</strong> <span id="debug-buffer">0 KB</span></div>
+    <div><strong>Sent:</strong> <span id="debug-sent">0 packets</span></div>
+    <div><strong>VAD:</strong> <span id="debug-vad">Inactive</span></div>
+    <div><strong>Silence Timer:</strong> <span id="debug-timer">-</span></div>
+    <div><strong>Audio Processor:</strong> <span id="debug-processor">AudioWorklet</span></div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+    const userId = "user_123"; // Replace with actual user ID
+    const username = "guest";
+    document.getElementById("username").textContent = username;
+  
+    let socket, audioContext, micStream, audioWorkletNode, micVAD, pingInterval;
+    let isMuted = false;
+    let speechActive = false;
+    let isProcessing = false;
+    let audioBuffer = [];
+    let packetsSent = 0;
+    let vadConfidenceThreshold = 0.85;
+    let silenceTimer = null;
+    let silenceWindow = 4000;
+  
+    // Button references
+    const startBtn = document.getElementById("start");
+    const stopBtn = document.getElementById("stop");
+    const muteBtn = document.getElementById("mute");
+
+    // Centralized button state management
+    function setButtonStates(config) {
+      startBtn.disabled = config.startDisabled;
+      stopBtn.disabled = config.stopDisabled;
+      muteBtn.disabled = config.muteDisabled;
+    }
+
+    function updateStatus(text, color = 'text-green-400') {
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = text;
+      statusEl.className = color;
+      document.getElementById('debug-status').textContent = text;
+    }
+
+    function updateDebugInfo() {
+      const bufferSize = audioBuffer.reduce((sum, b) => sum + b.byteLength, 0);
+      document.getElementById('debug-buffer').textContent = `${(bufferSize / 1024).toFixed(2)} KB`;
+      document.getElementById('debug-sent').textContent = `${packetsSent} packets`;
+      document.getElementById('debug-vad').textContent = speechActive ? 'Active' : 'Inactive';
+      document.getElementById('debug-timer').textContent = silenceTimer ? 'Running' : '-';
+    }
+  
+    function startPing() {
+      if (pingInterval) clearInterval(pingInterval);
+      pingInterval = setInterval(() => {
+        if (socket?.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 20000);
+    }
+  
+    function stopPing() {
+      if (pingInterval) {
+        clearInterval(pingInterval);
+        pingInterval = null;
+      }
+    }
+  
+    function openWebSocket() {
+      if (socket && socket.readyState !== WebSocket.CLOSED) return;
+      
+      socket = new WebSocket("ws://localhost:8080/voice_chat");
+      socket.binaryType = "arraybuffer";
+  
+      socket.onopen = () => {
+        updateStatus("Connected", "text-blue-400");
+      };
+      
+      socket.onclose = () => {
+        updateStatus("Disconnected", "text-red-400");
+        setButtonStates({ startDisabled: false, stopDisabled: true, muteDisabled: true });
+        stopPing();
+      };
+      
+      socket.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        updateStatus("Connection Error", "text-yellow-400");
+        stopPing();
+      };
+      
+      socket.onmessage = (event) => {
+        try {
+          const audioBlob = new Blob([event.data], { type: "audio/wav" });
+          const audioURL = URL.createObjectURL(audioBlob);
+          const audio = new Audio(audioURL);
+          audio.play().catch(e => console.error("Audio playback error:", e));
+        } catch (e) {
+          console.error("Message processing error:", e);
+        }
+      };
+    }
+  
+    async function waitForSocketConnection() {
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("Socket connection timeout"));
+        }, 5000);
+        
+        const check = setInterval(() => {
+          if (socket?.readyState === WebSocket.OPEN) {
+            clearInterval(check);
+            clearTimeout(timeout);
+            resolve();
+          }
+        }, 100);
+      });
+    }
+
+    function sendAudioData() {
+      if (audioBuffer.length === 0 || !socket || socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      try {
+        const totalLength = audioBuffer.reduce((sum, buf) => sum + buf.byteLength, 0);
+        
+        if (totalLength === 0) {
+          audioBuffer = [];
+          return;
+        }
+
+        const combined = new Uint8Array(totalLength);
+        let offset = 0;
+        
+        for (const buf of audioBuffer) {
+          combined.set(new Uint8Array(buf), offset);
+          offset += buf.byteLength;
+        }
+        
+        socket.send(combined.buffer);
+        packetsSent++;
+        
+        console.log(`Sent audio packet: ${(totalLength / 1024).toFixed(2)} KB`);
+        
+        audioBuffer = [];
+        updateDebugInfo();
+      } catch (error) {
+        console.error("Error sending audio:", error);
+        audioBuffer = [];
+      }
+    }
+
+    // Define the AudioWorklet processor inline
+    const processorCode = `
+      class AudioCaptureProcessor extends AudioWorkletProcessor {
+        process(inputs, outputs, parameters) {
+          const input = inputs[0];
+          if (input.length > 0) {
+            const channelData = input[0];
+            // Send audio data to main thread
+            this.port.postMessage(channelData);
+          }
+          return true;
+        }
+      }
+      registerProcessor('audio-capture-processor', AudioCaptureProcessor);
+    `;
+  
+    async function startAudioStream() {
+      if (isProcessing) {
+        console.log('⚠️ Already processing, ignoring duplicate start');
+        return;
+      }
+      
+      // Prevent double-initialization
+      if (audioContext || micStream) {
+        console.log('⚠️ Audio already initialized, stopping first');
+        await stopAudioStream();
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      isProcessing = true;
+      
+      // Disable Start button IMMEDIATELY
+      setButtonStates({ startDisabled: true, stopDisabled: true, muteDisabled: true });
+      
+      try {
+        console.log('🎬 Starting audio stream...');
+        updateStatus("Initializing...", "text-yellow-400");
+
+        if (!socket || socket.readyState === WebSocket.CLOSED) {
+          openWebSocket();
+          await waitForSocketConnection();
+        }
+        
+        socket.send(JSON.stringify({ type: "start_conversation", user_id: userId }));
+
+        micStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 48000,
+            channelCount: 1,
+            latency: 0.01
+          } 
+        });
+        
+        audioContext = new AudioContext({ 
+          sampleRate: 48000,
+          latency: "interactive"
+        });
+        
+        console.log('Audio context created at', audioContext.sampleRate, 'Hz');
+
+        // Create AudioWorklet processor
+        const blob = new Blob([processorCode], { type: 'application/javascript' });
+        const processorUrl = URL.createObjectURL(blob);
+        
+        await audioContext.audioWorklet.addModule(processorUrl);
+        URL.revokeObjectURL(processorUrl);
+        
+        audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-capture-processor');
+        
+        // Handle audio data from the worklet
+        audioWorkletNode.port.onmessage = (event) => {
+          if (!isMuted && speechActive) {
+            const float32Array = new Float32Array(event.data);
+            audioBuffer.push(float32Array.buffer);
+            updateDebugInfo();
+          }
+        };
+        
+        const micSource = audioContext.createMediaStreamSource(micStream);
+        micSource.connect(audioWorkletNode);
+        audioWorkletNode.connect(audioContext.destination);
+        
+        console.log('AudioWorklet pipeline connected (48kHz, low-latency)');
+
+        micVAD = await vad.MicVAD.new({
+          model: "v5",
+          onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
+          baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/",
+          stream: micStream,
+          positiveSpeechThreshold: vadConfidenceThreshold,
+          negativeSpeechThreshold: 0.70,
+          redemptionMs: 1400,
+          preSpeechPadMs: 800,
+          minSpeechMs: 400,
+          
+          onSpeechStart: () => {
+            if (!isMuted) {
+              if (silenceTimer) {
+                clearTimeout(silenceTimer);
+                silenceTimer = null;
+                console.log("Speech resumed - cancelled silence timer");
+              }
+              
+              if (!speechActive) {
+                speechActive = true;
+                audioBuffer = [];
+                packetsSent = 0;
+                console.log("Speech detected - buffering started");
+              }
+              
+              document.querySelectorAll('.circle').forEach(c => c.classList.add('animate'));
+              updateStatus("Speaking", "text-green-400");
+              updateDebugInfo();
+            }
+          },
+          
+          onSpeechEnd: () => {
+            if (speechActive && !isMuted) {
+              console.log("Speech paused - starting 4-second silence window");
+              
+              if (silenceTimer) {
+                clearTimeout(silenceTimer);
+              }
+              
+              silenceTimer = setTimeout(() => {
+                console.log("4 seconds of silence - sending buffered audio");
+                
+                speechActive = false;
+                
+                sendAudioData();
+                
+                document.querySelectorAll('.circle').forEach(c => c.classList.remove('animate'));
+                updateStatus("Connected", "text-blue-400");
+                updateDebugInfo();
+                
+                silenceTimer = null;
+              }, silenceWindow);
+              
+              document.querySelectorAll('.circle').forEach(c => c.classList.remove('animate'));
+              updateStatus("Listening...", "text-cyan-400");
+              updateDebugInfo();
+            }
+          }
+        });
+        
+        await micVAD.start();
+        startPing();
+        updateStatus("Ready - Speak now", "text-blue-400");
+        
+        // Enable Stop and Mute buttons after successful start
+        setButtonStates({ startDisabled: true, stopDisabled: false, muteDisabled: false });
+      } catch (error) {
+        console.error("Error starting audio stream:", error);
+        updateStatus("Error: " + error.message, "text-red-400");
+        await stopAudioStream();
+        // Re-enable Start button on error
+        setButtonStates({ startDisabled: false, stopDisabled: true, muteDisabled: true });
+      } finally {
+        isProcessing = false;
+      }
+    }
+  
+    async function stopAudioStream() {
+      if (isProcessing) return;
+      isProcessing = true;
+      
+      // Disable all buttons during cleanup
+      setButtonStates({ startDisabled: true, stopDisabled: true, muteDisabled: true });
+      
+      try {
+        if (silenceTimer) {
+          clearTimeout(silenceTimer);
+          silenceTimer = null;
+        }
+        
+        if (speechActive && audioBuffer.length > 0) {
+          sendAudioData();
+        }
+
+        if (micVAD) {
+          await micVAD.pause();
+          micVAD.destroy();
+          micVAD = null;
+        }
+        
+        if (audioWorkletNode) {
+          audioWorkletNode.disconnect();
+          audioWorkletNode.port.onmessage = null;
+          audioWorkletNode = null;
+        }
+        
+        if (audioContext) {
+          await audioContext.close();
+          audioContext = null;
+        }
+        
+        if (micStream) {
+          micStream.getTracks().forEach(t => t.stop());
+          micStream = null;
+        }
+
+        if (socket?.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "end_conversation" }));
+        }
+        
+        if (socket) {
+          socket.close();
+          socket = null;
+        }
+
+        speechActive = false;
+        isMuted = false;
+        audioBuffer = [];
+        packetsSent = 0;
+        document.querySelectorAll('.circle').forEach(c => c.classList.remove('animate'));
+        
+        // Reset mute button text
+        muteBtn.innerHTML = `<i data-lucide="mic-off" class="w-5 h-5"></i> Mute`;
+        lucide.createIcons();
+        
+        updateStatus("Disconnected", "text-red-400");
+        updateDebugInfo();
+        stopPing();
+        
+        // Re-enable Start button after complete cleanup
+        setButtonStates({ startDisabled: false, stopDisabled: true, muteDisabled: true });
+      } catch (error) {
+        console.error("Error stopping audio stream:", error);
+        setButtonStates({ startDisabled: false, stopDisabled: true, muteDisabled: true });
+      } finally {
+        isProcessing = false;
+      }
+    }
+  
+    startBtn.addEventListener("click", startAudioStream);
+    stopBtn.addEventListener("click", stopAudioStream);
+  
+    muteBtn.addEventListener("click", async () => {
+      isMuted = !isMuted;
+      muteBtn.innerHTML = isMuted
+        ? `<i data-lucide="mic" class="w-5 h-5"></i> Unmute`
+        : `<i data-lucide="mic-off" class="w-5 h-5"></i> Mute`;
+      lucide.createIcons();
+
+      if (isMuted) {
+        if (silenceTimer) {
+          clearTimeout(silenceTimer);
+          silenceTimer = null;
+        }
+        
+        if (speechActive) {
+          sendAudioData();
+          speechActive = false;
+        }
+        document.querySelectorAll('.circle').forEach(c => c.classList.remove('animate'));
+      }
+      
+      updateStatus(isMuted ? "Muted" : "Connected", isMuted ? "text-yellow-400" : "text-blue-400");
+
+      if (micVAD) {
+        if (isMuted) {
+          await micVAD.pause();
+        } else {
+          await micVAD.start();
+        }
+      }
+      
+      updateDebugInfo();
+    });
+    
+    window.addEventListener("beforeunload", () => {
+      stopAudioStream();
+    });
+  </script>
+  
+</body>
+</html>
