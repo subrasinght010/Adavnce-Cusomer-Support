@@ -62,7 +62,7 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "access_token")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
-
+from router.twilio_call import app as twilio_router
 # -------------------------
 # FastAPI app
 # -------------------------
@@ -104,6 +104,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Multi-Agent Communication System", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 templates = Jinja2Templates(directory="frontend/templates")
+app.include_router(twilio_router, prefix="/webhook/twilio")
+
+
 
 app.add_middleware(
     CORSMiddleware,
