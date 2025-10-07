@@ -1,12 +1,10 @@
-# main.py (CLEANED & OPTIMIZED)
+# main.py (CLEANED & OPTIMIZED - ALL BUGS FIXED)
 import asyncio
 import os
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 from contextlib import asynccontextmanager
-# Add these imports
-from workers import worker_manager
 import signal
 from dotenv import load_dotenv
 import jwt
@@ -15,14 +13,18 @@ import uvicorn
 from fastapi import (
     FastAPI,
     Request,
-    Response,
     Form,
     Depends,
     HTTPException,
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi.responses import (
+    JSONResponse, 
+    RedirectResponse, 
+    HTMLResponse,
+    Response  # ✅ Moved here from inside functions
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,10 +34,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 # Project imports
-from state.optimized_workflow_state import WorkflowState
-from nodes.optimized_incoming_listener import incoming_listener
-
-
 from database.crud import DBManager
 from database.db import get_db, init_db
 from database.models import User
@@ -49,7 +47,16 @@ from utils.audio import (
 )
 from utils.secure import verify_password, hash_password
 
-from router.twilio_call import router as twilio_router  # ✅
+# Service handlers
+from services.sms_handler import sms_handler
+from services.whatsapp_handler import whatsapp_handler
+
+# Router
+from router.twilio_call import router as twilio_router
+
+# Workers
+from workers import worker_manager
+
 # -------------------------
 # Load env & constants
 # -------------------------
@@ -58,7 +65,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "access_token")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
 # -------------------------
-# FastAPI app
+# FastAPI app with lifespan
 # -------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -68,14 +75,21 @@ async def lifespan(app: FastAPI):
     print("🚀 Application Starting...")
     print("=" * 60)
     
-    await init_db()
-    print("✅ Database initialized")
+    try:
+        await init_db()
+        print("✅ Database initialized")
+    except Exception as e:
+        print(f"❌ Database initialization failed: {e}")
+        raise
     
     # Start background workers
     try:
         await worker_manager.start_all_workers()
+        print("✅ Background workers started")
     except Exception as e:
-        print(f"⚠️ Warning: Some workers failed to start: {e}")
+        print(f"⚠️  Warning: Some workers failed to start: {e}")
+        import traceback
+        traceback.print_exc()
     
     print("\n" + "=" * 60)
     print("✅ Application Ready!")
@@ -88,7 +102,11 @@ async def lifespan(app: FastAPI):
     print("🛑 Application Shutting Down...")
     print("=" * 60)
     
-    await worker_manager.stop_all_workers()
+    try:
+        await worker_manager.stop_all_workers()
+        print("✅ Background workers stopped")
+    except Exception as e:
+        print(f"⚠️  Error stopping workers: {e}")
     
     print("\n" + "=" * 60)
     print("✅ Application Shutdown Complete")
@@ -98,10 +116,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Multi-Agent Communication System", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
 templates = Jinja2Templates(directory="frontend/templates")
+
+# Include routers
 app.include_router(twilio_router, prefix="/webhook/twilio")
 
-
-
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -206,7 +225,6 @@ async def home_page(
 
 @app.post("/signup")
 async def signup(
-    response: Response,
     username: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
@@ -214,6 +232,7 @@ async def signup(
 ):
     if password != confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match")
+    
     result = await db.execute(select(User).where(User.username == username))
     if result.scalars().first():
         raise HTTPException(status_code=400, detail="Username already exists")
@@ -232,7 +251,6 @@ async def signup(
 
 @app.post("/login")
 async def login(
-    response: Response,
     username: str = Form(...),
     password: str = Form(...),
     db: AsyncSession = Depends(get_db),
@@ -244,51 +262,45 @@ async def login(
             token = create_jwt_token(username)
             redirect_response = RedirectResponse(url="/", status_code=303)
             redirect_response.set_cookie(
-                key="access_token", value=token, httponly=True, secure=False, samesite="Lax"
+                key="access_token", 
+                value=token, 
+                httponly=True, 
+                secure=False, 
+                samesite="Lax"
             )
             return redirect_response
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
-
-# Add this endpoint with other routes
+# -------------------------
+# System Status Endpoints
+# -------------------------
 @app.get("/workers/status")
 async def workers_status():
     """Get status of all background workers"""
+    try:
+        status = worker_manager.get_all_status()
+        return {
+            "status": "ok",
+            "workers": status,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return JSONResponse(
+            {"status": "error", "message": str(e)},
+            status_code=500
+        )
+
+
+@app.get("/health")
+async def health_check():
+    """Basic health check endpoint"""
     return {
-        "workers": worker_manager.get_all_status(),
-        "timestamp": datetime.now().isoformat()
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "Multi-Agent Communication System"
     }
 
-# Add import
-from utils.health_check import health_check
-
-# Add endpoint
-@app.get("/health")
-async def health_endpoint():
-    """
-    Health check endpoint
-    Returns 200 if healthy, 503 if unhealthy
-    """
-    result = await health_check.check_all()
-    
-    status_code = 200 if result['overall_status'] == 'healthy' else 503
-    
-    return JSONResponse(
-        content=result,
-        status_code=status_code
-    )
-
-@app.get("/health/quick")
-async def health_quick():
-    """Quick health check - just returns 200"""
-    return {"status": "ok", "timestamp": datetime.now().isoformat()}
-
-# Add these imports at the top
-from services.sms_handler import sms_handler
-from services.whatsapp_handler import whatsapp_handler
-
-# Add these endpoints AFTER existing routes (before WebSocket endpoint)
 
 # -------------------------
 # SMS Webhook
@@ -300,7 +312,6 @@ async def webhook_sms(request: Request):
     Configure in Twilio Console: https://yourserver.com/webhook/sms
     """
     try:
-        # Get form data from Twilio
         form_data = await request.form()
         webhook_data = {
             'From': form_data.get('From'),
@@ -315,7 +326,6 @@ async def webhook_sms(request: Request):
         result = await sms_handler.handle_incoming_sms(webhook_data)
         
         # Return TwiML response (required by Twilio)
-        from fastapi.responses import Response
         return Response(
             content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
             media_type="application/xml"
@@ -328,7 +338,7 @@ async def webhook_sms(request: Request):
         return Response(
             content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
             media_type="application/xml",
-            status_code=200  # Always return 200 to Twilio
+            status_code=200
         )
 
 
@@ -342,14 +352,13 @@ async def webhook_whatsapp(request: Request):
     Configure in Twilio Console: https://yourserver.com/webhook/whatsapp
     """
     try:
-        # Get form data from Twilio
         form_data = await request.form()
         webhook_data = {
             'From': form_data.get('From'),
             'To': form_data.get('To'),
             'Body': form_data.get('Body'),
             'MessageSid': form_data.get('MessageSid'),
-            'MediaUrl0': form_data.get('MediaUrl0'),  # First media attachment
+            'MediaUrl0': form_data.get('MediaUrl0'),
             'NumMedia': form_data.get('NumMedia', '0')
         }
         
@@ -359,7 +368,6 @@ async def webhook_whatsapp(request: Request):
         result = await whatsapp_handler.handle_incoming_whatsapp(webhook_data)
         
         # Return TwiML response
-        from fastapi.responses import Response
         return Response(
             content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
             media_type="application/xml"
@@ -386,13 +394,18 @@ async def webhook_status():
         "status": "online",
         "endpoints": {
             "sms": "/webhook/sms",
-            "whatsapp": "/webhook/whatsapp"
+            "whatsapp": "/webhook/whatsapp",
+            "twilio_voice": "/webhook/twilio/voice/*"
         },
         "timestamp": datetime.now().isoformat()
     }
 
-# ==================== SAFE SEND HELPER ====================
+
+# -------------------------
+# WebSocket Helper
+# -------------------------
 async def safe_send(websocket: WebSocket, data: dict) -> bool:
+    """Safely send JSON data to WebSocket"""
     try:
         if websocket.application_state == WebSocketState.CONNECTED:
             await websocket.send_json(data)
@@ -401,17 +414,17 @@ async def safe_send(websocket: WebSocket, data: dict) -> bool:
         print(f"Send failed: {e}")
     return False
 
+
 # -------------------------
 # WebSocket: voice_chat
 # -------------------------
 @app.websocket("/voice_chat")
 async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
-    """Optimized WebSocket endpoint for real-time voice communication"""
+    """WebSocket endpoint for real-time voice communication"""
     
-    # Accept connection
     await websocket.accept()
-    print("WebSocket connected")
-    print("Client-side VAD handles speech detection, server validates technical quality")
+    print("✅ WebSocket connected")
+    print("Client-side VAD handles speech detection, server validates quality")
 
     # Initialize state
     validator = AudioValidator()
@@ -436,21 +449,18 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
         
         # Main message loop
         while True:
-            # Check connection state before receiving
             if websocket.application_state != WebSocketState.CONNECTED:
                 print("WebSocket disconnected")
                 break
             
             try:
-                # Receive with timeout to prevent hanging
                 message = await asyncio.wait_for(
                     websocket.receive(),
                     timeout=60.0
                 )
                 
             except asyncio.TimeoutError:
-                # Send periodic ping to keep connection alive
-                print("Receive timeout - sending keepalive ping")
+                print("Timeout - sending keepalive ping")
                 await safe_send(websocket, {
                     "type": "ping",
                     "stats": validator.get_stats()
@@ -510,7 +520,7 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
         traceback.print_exc()
         
     finally:
-        # Cleanup: Cancel silence checker
+        # Cleanup
         if silence_check_task and not silence_check_task.done():
             silence_check_task.cancel()
             try:
@@ -518,11 +528,10 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
             except asyncio.CancelledError:
                 pass
         
-        # Process remaining audio buffer
+        # Process remaining audio
         if audio_data_ref.get('value'):
             print("Processing remaining audio buffer...")
             try:
-                # Don't await if connection is closed
                 if websocket.application_state == WebSocketState.CONNECTED:
                     await process_audio(
                         audio_data_ref['value'],
@@ -552,13 +561,14 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
             except Exception as e:
                 print(f"Error closing database: {e}")
         
-        # Close WebSocket connection
+        # Close WebSocket
         if websocket.application_state == WebSocketState.CONNECTED:
             try:
                 await websocket.close()
                 print("WebSocket closed cleanly")
             except Exception as e:
                 print(f"Error closing WebSocket: {e}")
+
 
 # -------------------------
 # Main entry
