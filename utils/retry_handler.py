@@ -8,12 +8,28 @@ from typing import Callable, Any, Optional
 from datetime import datetime
 
 
+# utils/retry_handler.py
+# REPLACE the __init__ method with this:
+
 class RetryHandler:
-    def __init__(self):
-        self.max_retries = 3
-        self.base_delay = 1  # seconds
-        self.max_delay = 60  # seconds
-    
+    def __init__(
+        self,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+        max_delay: float = 60.0
+    ):
+        """
+        Initialize retry handler
+        
+        Args:
+            max_retries: Maximum retry attempts
+            initial_delay: Initial delay in seconds
+            max_delay: Maximum delay in seconds
+        """
+        self.max_retries = max_retries
+        self.base_delay = initial_delay  # Changed from 1
+        self.max_delay = max_delay  # Changed from 60
+        
     async def retry_with_exponential_backoff(
         self,
         func: Callable,

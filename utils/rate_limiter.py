@@ -95,6 +95,29 @@ class RateLimiter:
         if identifier in self.requests:
             del self.requests[identifier]
 
-
+    async def allow_request(
+        self,
+        identifier: str,
+        max_requests: int = 60,
+        window_seconds: int = 60
+    ) -> bool:
+        """
+        Simple check if request is allowed
+        
+        Args:
+            identifier: Unique identifier
+            max_requests: Max requests per window
+            window_seconds: Time window
+            
+        Returns:
+            True if allowed, False if rate limited
+        """
+        allowed, retry_after = self.check_rate_limit(
+            identifier,
+            max_requests=max_requests,
+            window_seconds=window_seconds
+        )
+        
+        return allowed
 # Singleton instance
 rate_limiter = RateLimiter()

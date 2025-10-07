@@ -80,8 +80,12 @@ class ExecuteCallWorker:
         """
         
         try:
-            async with get_db() as db:
-                db_manager = DBManager(db)
+            # Replace in execute_call_worker.py
+            from database.db import AsyncSessionLocal
+
+            # Line ~89
+            async with AsyncSessionLocal() as session:
+                db_manager = DBManager(session)
                 
                 # Get pending callbacks
                 pending_callbacks = await db_manager.get_pending_followups()
