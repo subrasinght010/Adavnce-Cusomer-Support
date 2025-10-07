@@ -32,7 +32,6 @@ from graph_workflows.optimized_workflow import workflow_runner
 
 logger = logging.getLogger(__name__)
 
-
 class ExecuteCallWorker:
     """
     Background worker that executes scheduled calls

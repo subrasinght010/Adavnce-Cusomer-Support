@@ -32,14 +32,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 # Project imports
-from state.workflow_state import WorkflowState
-from nodes.incoming_listener import incoming_listener
-from nodes.schedule_call import schedule_call_node
-from nodes.db_update import db_update_node
-from nodes.communication_agent import communication_agent
-from nodes.intent_detector import intent_detector_llm
-from nodes.stt_node import stt_node
-from nodes.tts_node import tts_node
+from state.optimized_workflow_state import WorkflowState
+from nodes.optimized_incoming_listener import incoming_listener
+
 
 from database.crud import DBManager
 from database.db import get_db, init_db
@@ -54,7 +49,7 @@ from utils.audio import (
 )
 from utils.secure import verify_password, hash_password
 
-
+from router.twilio_call import router as twilio_router  # ✅
 # -------------------------
 # Load env & constants
 # -------------------------
@@ -62,7 +57,6 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "access_token")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
-from router.twilio_call import app as twilio_router
 # -------------------------
 # FastAPI app
 # -------------------------
@@ -256,36 +250,6 @@ async def login(
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
-# -------------------------
-# Webhook endpoints
-# -------------------------
-async def handle_incoming(message_data: Dict[str, Any]) -> WorkflowState:
-    channel = message_data.get("channel")
-    voice_file_url = message_data.get("voice_file_url")
-    state = WorkflowState()
-    state = incoming_listener(state, message_data)
-
-    if channel in ["call", "voice"] and voice_file_url:
-        try:
-            state = stt_node(state, voice_file_url)
-        except Exception as e:
-            print(f"STT error: {e}")
-
-    try:
-        state = intent_detector_llm(state)
-        state = communication_agent(state)
-        state = db_update_node(state)
-        state = schedule_call_node(state)
-    except Exception as e:
-        print(f"Workflow error: {e}")
-
-    if channel in ["call", "voice"]:
-        try:
-            state = tts_node(state)
-        except Exception as e:
-            print(f"TTS error: {e}")
-
-    return state
 
 # Add this endpoint with other routes
 @app.get("/workers/status")

@@ -5,16 +5,36 @@ Add these endpoints to your existing main.py
 These handle Twilio voice calls (both incoming and outgoing)
 """
 
+from datetime import datetime
 from services.phone_service import phone_service
 from graph_workflows.optimized_workflow import workflow_runner
 from fastapi.responses import Response as FastAPIResponse
-from workers.execute_call_worker import execute_call_worker
+from fastapi import Request, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from database.crud import DBManager
+from database.db import get_db
+import logging
+from fastapi import APIRouter, Request, Depends
+from fastapi.responses import Response as FastAPIResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime
+import logging
 
+from database.crud import DBManager
+from database.db import get_db
+from services.phone_service import phone_service
+from graph_workflows.optimized_workflow import workflow_runner
+
+logger = logging.getLogger(__name__)
+
+# Create router
+router = APIRouter()
+logger = logging.getLogger(__name__)
 # ============================================================================
 # TWILIO VOICE WEBHOOKS - INCOMING CALLS
 # ============================================================================
 
-@app.post("/webhook/twilio/voice/incoming")
+@router.post("/webhook/twilio/voice/incoming")
 async def twilio_incoming_call(
     request: Request,
     db: AsyncSession = Depends(get_db)
@@ -78,7 +98,7 @@ async def twilio_incoming_call(
 # TWILIO VOICE WEBHOOKS - SPEECH PROCESSING
 # ============================================================================
 
-@app.post("/webhook/twilio/voice/process")
+@router.post("/webhook/twilio/voice/process")
 async def twilio_process_speech(
     request: Request,
     db: AsyncSession = Depends(get_db)
@@ -183,8 +203,8 @@ async def twilio_process_speech(
 # TWILIO VOICE WEBHOOKS - OUTGOING CALLS (TwiML)
 # ============================================================================
 
-@app.post("/webhook/twilio/voice/twiml/{lead_id}")
-@app.get("/webhook/twilio/voice/twiml/{lead_id}")
+@router.post("/webhook/twilio/voice/twiml/{lead_id}")
+@router.get("/webhook/twilio/voice/twiml/{lead_id}")
 async def twilio_outgoing_twiml(
     lead_id: str,
     db: AsyncSession = Depends(get_db)
@@ -225,7 +245,7 @@ async def twilio_outgoing_twiml(
 # TWILIO VOICE WEBHOOKS - CALL STATUS
 # ============================================================================
 
-@app.post("/webhook/twilio/voice/{lead_id}")
+@router.post("/webhook/twilio/voice/{lead_id}")
 async def twilio_call_status(
     lead_id: str,
     request: Request,
@@ -282,7 +302,7 @@ async def twilio_call_status(
 # TWILIO VOICE WEBHOOKS - RECORDING
 # ============================================================================
 
-@app.post("/webhook/twilio/recording")
+@router.post("/webhook/twilio/recording")
 async def twilio_recording_callback(
     request: Request,
     db: AsyncSession = Depends(get_db)
@@ -314,7 +334,7 @@ async def twilio_recording_callback(
 # TEST ENDPOINT - Make Outgoing Call
 # ============================================================================
 
-@app.post("/api/test/make-call")
+@router.post("/api/test/make-call")
 async def test_make_call(
     phone: str,
     lead_id: str = None,
