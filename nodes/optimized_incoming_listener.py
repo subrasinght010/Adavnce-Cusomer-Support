@@ -20,8 +20,7 @@ from state.optimized_workflow_state import (
 )
 
 # YOUR EXISTING CODE - Integrations
-from tools.stt import transcribe_audio  # YOUR STT
-from utils.audio import AudioValidator  # YOUR audio utils
+from tools.stt import transcribe_with_faster_whisper  # YOUR STT
 from config.settings import settings  # YOUR config
 
 import logging
@@ -38,8 +37,10 @@ class OptimizedIncomingListener(BaseNode):
     Integrates with YOUR existing audio and STT processing
     """
     
+    
     def __init__(self):
         super().__init__("incoming_listener")
+        from utils.audio import AudioValidator
         self.audio_validator = AudioValidator()  # YOUR audio validator
     
     @with_timing
@@ -133,8 +134,8 @@ class OptimizedIncomingListener(BaseNode):
         Transcribe voice using YOUR existing STT
         """
         try:
-            # Use YOUR existing transcribe_audio function
-            transcribed = await transcribe_audio(voice_file_url)
+            # Use YOUR existing transcribe_with_faster_whisper function
+            transcribed = await transcribe_with_faster_whisper(voice_file_url)
             
             # Handle different return types from your STT
             if isinstance(transcribed, dict):

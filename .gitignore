@@ -21,7 +21,7 @@ mydatabase.db
 # Audio / data directories
 # ======================
 audio_data/
-cromadb/
+chroma_db/
 
 # ======================
 # Project-specific directories

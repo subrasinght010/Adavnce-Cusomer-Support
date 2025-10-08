@@ -16,13 +16,12 @@ When executing a scheduled call:
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import List, Dict
+from datetime import datetime
+from typing import Dict
 
 # Database
 from database.crud import DBManager
-from database.db import get_db
-from database.models import Followup, Lead
+from database.models import FollowUp
 
 # Services
 from services.phone_service import PhoneService
@@ -112,7 +111,7 @@ class ExecuteCallWorker:
         except Exception as e:
             logger.error(f"Failed to process scheduled calls: {e}")
     
-    async def _execute_single_call(self, callback: Followup, db_manager: DBManager):
+    async def _execute_single_call(self, callback: FollowUp, db_manager: DBManager):
         """
         Execute a single scheduled call and run through COMPLETE workflow
         
@@ -333,7 +332,7 @@ class ExecuteCallWorker:
         # Calculate call duration
         duration = (datetime.utcnow() - call_info["started_at"]).total_seconds()
         
-        # Update followup status
+        # Update FollowUp status
         await db_manager.update_followup(
             followup_id,
             status="completed",

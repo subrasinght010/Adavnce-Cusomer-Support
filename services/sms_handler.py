@@ -8,14 +8,15 @@ from datetime import datetime
 from database.crud import DBManager
 from database.db import AsyncSessionLocal
 from utils.context_builder import ContextBuilder
-from nodes.intent_detector import intent_detector_llm
+from nodes.unified_intelligence_agent import UnifiedIntelligenceAgent
 from services.sms_service import send_sms
-from state.workflow_state import WorkflowState, lead_reducer
+from state.optimized_workflow_state import OptimizedWorkflowState
 
 
 class SMSHandler:
     def __init__(self):
         self.processing_lock = asyncio.Lock()
+        self.intelligence_agent = UnifiedIntelligenceAgent()
     
     async def handle_incoming_sms(self, webhook_data: Dict) -> Dict:
         """
@@ -47,161 +48,107 @@ class SMSHandler:
             
             print(f"📱 SMS received from {from_number}: {message_body}")
             
-            # Process in background to not block webhook response
-            asyncio.create_task(
-                self._process_sms_async(from_number, message_body, message_sid)
-            )
-            
-            return {
-                'status': 'success',
-                'message': 'SMS received and processing'
-            }
-            
+            # Acquire lock to prevent race conditions
+            async with self.processing_lock:
+                async with AsyncSessionLocal() as db:
+                    db_manager = DBManager(db)
+                    
+                    # Get or create lead
+                    lead = await db_manager.get_lead_by_phone(from_number)
+                    if not lead:
+                        lead = await db_manager.create_lead({
+                            'phone_number': from_number,
+                            'channel': 'sms',
+                            'status': 'new',
+                            'created_at': datetime.utcnow()
+                        })
+                    
+                    lead_id = str(lead.id)
+                    
+                    # Save incoming message
+                    await db_manager.create_conversation_message({
+                        'lead_id': lead_id,
+                        'message': message_body,
+                        'direction': 'inbound',
+                        'channel': 'sms',
+                        'timestamp': datetime.utcnow(),
+                        'message_sid': message_sid
+                    })
+                    
+                    # Build conversation history context
+                    context_builder = ContextBuilder(db_manager)
+                    conversation_history = await context_builder.get_conversation_context(
+                        lead_id, 
+                        limit=10
+                    )
+                    
+                    # Create optimized workflow state
+                    state = OptimizedWorkflowState(
+                        session_id=f"sms_{message_sid}",
+                        lead_id=lead_id,
+                        current_message=message_body,
+                        channel="sms",
+                        conversation_history=conversation_history,
+                        lead_context={
+                            'phone_number': from_number,
+                            'status': lead.status,
+                            'previous_interactions': len(conversation_history)
+                        }
+                    )
+                    
+                    # Process with unified intelligence agent
+                    print(f"🤖 Processing with Unified Intelligence Agent...")
+                    result_state = await self.intelligence_agent.execute(state)
+                    
+                    # Extract response from intelligence output
+                    intelligence_output = result_state.get('intelligence_output', {})
+                    response_text = intelligence_output.get('response_text', 
+                        'Thank you for your message. Our team will get back to you shortly.')
+                    
+                    # Send SMS response
+                    sms_sent = await send_sms(
+                        to_number=from_number,
+                        message=response_text
+                    )
+                    
+                    if sms_sent:
+                        # Save outbound message
+                        await db_manager.create_conversation_message({
+                            'lead_id': lead_id,
+                            'message': response_text,
+                            'direction': 'outbound',
+                            'channel': 'sms',
+                            'timestamp': datetime.utcnow()
+                        })
+                        
+                        # Update lead with latest intent and sentiment
+                        await db_manager.update_lead(lead_id, {
+                            'last_contacted': datetime.utcnow(),
+                            'last_message': message_body,
+                            'last_intent': intelligence_output.get('intent', 'unknown'),
+                            'last_sentiment': intelligence_output.get('sentiment', 'neutral'),
+                            'status': 'engaged'
+                        })
+                        
+                        print(f"✅ SMS sent successfully to {from_number}")
+                    
+                    return {
+                        'status': 'success',
+                        'lead_id': lead_id,
+                        'response': response_text,
+                        'intent': intelligence_output.get('intent'),
+                        'sentiment': intelligence_output.get('sentiment')
+                    }
+        
         except Exception as e:
-            print(f"❌ Error handling SMS: {e}")
+            print(f"❌ SMS handling error: {e}")
             import traceback
             traceback.print_exc()
+            
             return {
                 'status': 'error',
                 'message': str(e)
             }
-    
-    async def _process_sms_async(
-        self,
-        phone_number: str,
-        message: str,
-        message_sid: str
-    ):
-        """Process SMS asynchronously"""
-        async with AsyncSessionLocal() as session:
-            db = DBManager(session)
-            context_builder = ContextBuilder(db)
-            
-            try:
-                # Find or create lead
-                lead = await db.get_or_create_lead(
-                    phone=phone_number,
-                    name=f"SMS User {phone_number[-4:]}"
-                )
-                
-                print(f"✅ Lead identified: {lead.id} - {lead.name}")
-                
-                # Save incoming message
-                await db.add_conversation(
-                    lead_id=lead.id,
-                    message=message,
-                    channel='sms',
-                    sender='user',
-                    message_id=message_sid
-                )
-                
-                # Build context
-                context = await context_builder.build_context_for_ai(
-                    lead_id=lead.id,
-                    current_message=message,
-                    channel='sms',
-                    max_messages=10
-                )
-                
-                print(f"📋 Context built: {context['conversation_type']}")
-                
-                # Create workflow state
-                state = WorkflowState(
-                    lead_id=str(lead.id),
-                    lead_data={
-                        'name': lead.name,
-                        'phone': lead.phone,
-                        'email': lead.email
-                    },
-                    client_type=lead.client_type or 'existing',
-                    conversation_thread=[
-                        f"User (SMS): {message}"
-                    ],
-                    preferred_channel='sms',
-                    lead_status=lead.lead_status,
-                    db_log=[],
-                    channel_history=['sms']
-                )
-                
-                # Run intent detection
-                updated_state = intent_detector_llm(state)
-                
-                # Get AI response
-                ai_response = updated_state.get('agent_response') or \
-                             updated_state.get('conversation_thread', [])[-1] if updated_state.get('conversation_thread') else \
-                             "Thank you for your message. How can I help you?"
-                
-                # Clean AI response (remove prefixes like "Agent:")
-                if ':' in ai_response:
-                    ai_response = ai_response.split(':', 1)[1].strip()
-                
-                print(f"🤖 AI Response: {ai_response}")
-                
-                # Send SMS reply
-                success = await send_sms(phone_number, ai_response)
-                
-                if success:
-                    # Save AI response
-                    await db.add_conversation(
-                        lead_id=lead.id,
-                        message=ai_response,
-                        channel='sms',
-                        sender='ai',
-                        intent_detected=updated_state.get('intent_detected')
-                    )
-                    
-                    # Update lead
-                    lead.last_contacted_at = datetime.now()
-                    lead.response_received = True
-                    await session.commit()
-                    
-                    print(f"✅ SMS reply sent successfully")
-                else:
-                    print(f"❌ Failed to send SMS reply")
-                
-            except Exception as e:
-                print(f"❌ Error processing SMS: {e}")
-                import traceback
-                traceback.print_exc()
-    
-    async def send_sms_reply(
-        self,
-        phone_number: str,
-        message: str,
-        lead_id: int = None
-    ) -> bool:
-        """
-        Send SMS reply and track in database
-        
-        Args:
-            phone_number: Recipient phone number
-            message: Message text
-            lead_id: Optional lead ID for tracking
-        
-        Returns:
-            Success boolean
-        """
-        try:
-            # Send SMS
-            success = await send_sms(phone_number, message)
-            
-            if success and lead_id:
-                # Save to database
-                async with AsyncSessionLocal() as session:
-                    db = DBManager(session)
-                    await db.add_conversation(
-                        lead_id=lead_id,
-                        message=message,
-                        channel='sms',
-                        sender='ai',
-                        delivery_status='sent'
-                    )
-            
-            return success
-            
-        except Exception as e:
-            print(f"❌ Error sending SMS: {e}")
-            return False
 
 
 # Singleton instance

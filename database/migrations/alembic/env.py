@@ -6,7 +6,7 @@ from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from alembic import context
-sys.path.append('/Users/subrat/Desktop/Agent')
+sys.path.append('/Users/subrat/Desktop/Multi-Agent-System')
 # Import your Base and models
 from database.db import Base  # Your declarative base
 from database.models import *  # All your models

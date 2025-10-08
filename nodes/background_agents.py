@@ -18,8 +18,7 @@ from state.optimized_workflow_state import OptimizedWorkflowState
 # YOUR EXISTING CODE - Database
 from database.crud import DBManager
 from database.db import get_db
-from database.models import Conversation, Lead, Followup
-
+from database.models import *
 # YOUR EXISTING CODE - Utils
 from utils.message_queue import MessageQueue
 
@@ -27,7 +26,7 @@ from utils.message_queue import MessageQueue
 from config.settings import settings
 
 # YOUR EXISTING CODE - Workers (if needed)
-from workers.followup_worker import FollowupWorker
+from workers.followup_worker import FollowUpWorker
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +191,7 @@ class FollowUpAgent(BaseNode):
         
         # Initialize followup worker (YOUR existing code)
         try:
-            self.followup_worker = FollowupWorker()
+            self.followup_worker = FollowUpWorker()
         except:
             self.followup_worker = None
             self.logger.warning("Followup worker not available")

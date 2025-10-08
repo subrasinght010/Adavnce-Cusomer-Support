@@ -3,6 +3,7 @@
 Base Node class with built-in observability, error handling, and monitoring
 All your nodes should inherit from this class
 """
+# Add this import at the top
 
 import asyncio
 import time
@@ -10,7 +11,7 @@ import logging
 from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 from datetime import datetime
-
+import functools
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -355,6 +356,29 @@ class BaseNodeWithCache(BaseNode):
         self.cache.clear()
         self.logger.info("Cache cleared")
 
+
+# Add this decorator function after the BaseNode class (or before it)
+def with_timing(func):
+    """
+    Decorator for timing async functions
+    Usage:
+        @with_timing
+        async def my_function(self, state):
+            ...
+    """
+    @functools.wraps(func)
+    async def wrapper(self, *args, **kwargs):
+        start_time = time.time()
+        try:
+            result = await func(self, *args, **kwargs)
+            duration_ms = (time.time() - start_time) * 1000
+            self.logger.info(f"[{self.name}] Completed in {duration_ms:.2f}ms")
+            return result
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            self.logger.error(f"[{self.name}] Failed after {duration_ms:.2f}ms: {e}")
+            raise
+    return wrapper
 
 # ============================================================================
 # EXAMPLE USAGE

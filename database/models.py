@@ -59,7 +59,7 @@ class Conversation(BaseModel):
     # METADATA
     intent_detected = Column(String, nullable=True)
     embedding_id = Column(String, nullable=True)
-    metadata = Column(JSON, nullable=True)  # Store extra info like attachments, media URLs
+    meta_data = Column(JSON, nullable=True)  # Store extra info like attachments, media URLs
 
     lead = relationship("Lead", back_populates="conversations")
     

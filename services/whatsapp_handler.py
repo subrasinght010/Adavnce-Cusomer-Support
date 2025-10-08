@@ -8,14 +8,15 @@ from datetime import datetime
 from database.crud import DBManager
 from database.db import AsyncSessionLocal
 from utils.context_builder import ContextBuilder
-from nodes.intent_detector import intent_detector_llm
+from nodes.unified_intelligence_agent import UnifiedIntelligenceAgent
 from services.whatsapp_service import send_whatsapp
-from state.workflow_state import WorkflowState
+from state.optimized_workflow_state import OptimizedWorkflowState
 
 
 class WhatsAppHandler:
     def __init__(self):
         self.processing_lock = asyncio.Lock()
+        self.intelligence_agent = UnifiedIntelligenceAgent()
     
     async def handle_incoming_whatsapp(self, webhook_data: Dict) -> Dict:
         """
@@ -50,179 +51,120 @@ class WhatsAppHandler:
             print(f"💬 WhatsApp received from {from_number}: {message_body}")
             
             if media_url:
-                print(f"📎 Media attached: {media_url}")
+                print(f"📎 Media attachment: {media_url}")
             
-            # Process in background
-            asyncio.create_task(
-                self._process_whatsapp_async(
-                    from_number,
-                    message_body,
-                    message_sid,
-                    media_url
-                )
-            )
-            
-            return {
-                'status': 'success',
-                'message': 'WhatsApp received and processing'
-            }
-            
+            # Acquire lock to prevent race conditions
+            async with self.processing_lock:
+                async with AsyncSessionLocal() as db:
+                    db_manager = DBManager(db)
+                    
+                    # Get or create lead
+                    lead = await db_manager.get_lead_by_phone(from_number)
+                    if not lead:
+                        lead = await db_manager.create_lead({
+                            'phone_number': from_number,
+                            'channel': 'whatsapp',
+                            'status': 'new',
+                            'created_at': datetime.utcnow()
+                        })
+                    
+                    lead_id = str(lead.id)
+                    
+                    # Save incoming message
+                    message_data = {
+                        'lead_id': lead_id,
+                        'message': message_body,
+                        'direction': 'inbound',
+                        'channel': 'whatsapp',
+                        'timestamp': datetime.utcnow(),
+                        'message_sid': message_sid
+                    }
+                    
+                    if media_url:
+                        message_data['media_url'] = media_url
+                    
+                    await db_manager.create_conversation_message(message_data)
+                    
+                    # Build conversation history context
+                    context_builder = ContextBuilder(db_manager)
+                    conversation_history = await context_builder.get_conversation_context(
+                        lead_id, 
+                        limit=10
+                    )
+                    
+                    # Create optimized workflow state
+                    state = OptimizedWorkflowState(
+                        session_id=f"whatsapp_{message_sid}",
+                        lead_id=lead_id,
+                        current_message=message_body,
+                        channel="whatsapp",
+                        conversation_history=conversation_history,
+                        lead_context={
+                            'phone_number': from_number,
+                            'status': lead.status,
+                            'previous_interactions': len(conversation_history),
+                            'has_media': bool(media_url)
+                        }
+                    )
+                    
+                    # Add media URL to state if present
+                    if media_url:
+                        state['media_url'] = media_url
+                    
+                    # Process with unified intelligence agent
+                    print(f"🤖 Processing with Unified Intelligence Agent...")
+                    result_state = await self.intelligence_agent.execute(state)
+                    
+                    # Extract response from intelligence output
+                    intelligence_output = result_state.get('intelligence_output', {})
+                    response_text = intelligence_output.get('response_text', 
+                        'Thank you for your message. Our team will get back to you shortly.')
+                    
+                    # Send WhatsApp response
+                    whatsapp_sent = await send_whatsapp(
+                        to_number=from_number,
+                        message=response_text
+                    )
+                    
+                    if whatsapp_sent:
+                        # Save outbound message
+                        await db_manager.create_conversation_message({
+                            'lead_id': lead_id,
+                            'message': response_text,
+                            'direction': 'outbound',
+                            'channel': 'whatsapp',
+                            'timestamp': datetime.utcnow()
+                        })
+                        
+                        # Update lead with latest intent and sentiment
+                        await db_manager.update_lead(lead_id, {
+                            'last_contacted': datetime.utcnow(),
+                            'last_message': message_body,
+                            'last_intent': intelligence_output.get('intent', 'unknown'),
+                            'last_sentiment': intelligence_output.get('sentiment', 'neutral'),
+                            'status': 'engaged'
+                        })
+                        
+                        print(f"✅ WhatsApp sent successfully to {from_number}")
+                    
+                    return {
+                        'status': 'success',
+                        'lead_id': lead_id,
+                        'response': response_text,
+                        'intent': intelligence_output.get('intent'),
+                        'sentiment': intelligence_output.get('sentiment'),
+                        'has_media': bool(media_url)
+                    }
+        
         except Exception as e:
-            print(f"❌ Error handling WhatsApp: {e}")
+            print(f"❌ WhatsApp handling error: {e}")
             import traceback
             traceback.print_exc()
+            
             return {
                 'status': 'error',
                 'message': str(e)
             }
-    
-    async def _process_whatsapp_async(
-        self,
-        phone_number: str,
-        message: str,
-        message_sid: str,
-        media_url: str = None
-    ):
-        """Process WhatsApp message asynchronously"""
-        async with AsyncSessionLocal() as session:
-            db = DBManager(session)
-            context_builder = ContextBuilder(db)
-            
-            try:
-                # Find or create lead
-                lead = await db.get_or_create_lead(
-                    phone=phone_number,
-                    name=f"WhatsApp User {phone_number[-4:]}"
-                )
-                
-                print(f"✅ Lead identified: {lead.id} - {lead.name}")
-                
-                # Handle media if present
-                if media_url:
-                    message = f"{message}\n[Media attached: {media_url}]"
-                
-                # Save incoming message
-                metadata = {'media_url': media_url} if media_url else None
-                await db.add_conversation(
-                    lead_id=lead.id,
-                    message=message,
-                    channel='whatsapp',
-                    sender='user',
-                    message_id=message_sid,
-                    metadata=metadata
-                )
-                
-                # Build context
-                context = await context_builder.build_context_for_ai(
-                    lead_id=lead.id,
-                    current_message=message,
-                    channel='whatsapp',
-                    max_messages=10
-                )
-                
-                print(f"📋 Context built: {context['conversation_type']}")
-                
-                # Create workflow state
-                state = WorkflowState(
-                    lead_id=str(lead.id),
-                    lead_data={
-                        'name': lead.name,
-                        'phone': lead.phone,
-                        'email': lead.email
-                    },
-                    client_type=lead.client_type or 'existing',
-                    conversation_thread=[
-                        f"User (WhatsApp): {message}"
-                    ],
-                    preferred_channel='whatsapp',
-                    lead_status=lead.lead_status,
-                    db_log=[],
-                    channel_history=['whatsapp']
-                )
-                
-                # Run intent detection
-                updated_state = intent_detector_llm(state)
-                
-                # Get AI response
-                ai_response = updated_state.get('agent_response') or \
-                             updated_state.get('conversation_thread', [])[-1] if updated_state.get('conversation_thread') else \
-                             "Thank you for your WhatsApp message! How can I help you?"
-                
-                # Clean AI response
-                if ':' in ai_response:
-                    ai_response = ai_response.split(':', 1)[1].strip()
-                
-                print(f"🤖 AI Response: {ai_response}")
-                
-                # Send WhatsApp reply
-                success = await send_whatsapp(phone_number, ai_response)
-                
-                if success:
-                    # Save AI response
-                    await db.add_conversation(
-                        lead_id=lead.id,
-                        message=ai_response,
-                        channel='whatsapp',
-                        sender='ai',
-                        intent_detected=updated_state.get('intent_detected')
-                    )
-                    
-                    # Update lead
-                    lead.last_contacted_at = datetime.now()
-                    lead.response_received = True
-                    await session.commit()
-                    
-                    print(f"✅ WhatsApp reply sent successfully")
-                else:
-                    print(f"❌ Failed to send WhatsApp reply")
-                
-            except Exception as e:
-                print(f"❌ Error processing WhatsApp: {e}")
-                import traceback
-                traceback.print_exc()
-    
-    async def handle_media(self, media_url: str) -> Optional[Dict]:
-        """
-        Handle media attachments from WhatsApp
-        
-        Args:
-            media_url: URL of media file
-        
-        Returns:
-            Dictionary with media info
-        """
-        try:
-            # Download and process media
-            # This is a placeholder - implement based on your needs
-            import requests
-            
-            response = requests.get(media_url, timeout=10)
-            
-            if response.status_code == 200:
-                # Determine media type
-                content_type = response.headers.get('Content-Type', '')
-                
-                media_info = {
-                    'url': media_url,
-                    'type': content_type,
-                    'size': len(response.content)
-                }
-                
-                # Process based on type
-                if 'image' in content_type:
-                    print(f"📷 Image received: {media_url}")
-                elif 'pdf' in content_type:
-                    print(f"📄 PDF received: {media_url}")
-                elif 'audio' in content_type:
-                    print(f"🎵 Audio received: {media_url}")
-                
-                return media_info
-            
-            return None
-            
-        except Exception as e:
-            print(f"❌ Error handling media: {e}")
-            return None
 
 
 # Singleton instance

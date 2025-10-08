@@ -8,8 +8,7 @@ import numpy as np
 from collections import deque
 from scipy import signal
 
-from nodes.optimized_incoming_listener import incoming_listener
-from state.optimized_workflow_state import WorkflowState
+from state.optimized_workflow_state import OptimizedWorkflowState
 from tools.stt import transcribe_with_faster_whisper
 
 # ==================== CONFIGURATION ====================
@@ -193,11 +192,11 @@ async def process_audio(
     safe_send: Callable = None
 ):
     """
-    Process audio: quality check → STT → route to incoming_listener
+    Process audio: quality check → STT → route to incoming_listener_node
     
     Changes from original:
-    - Added call to incoming_listener after transcription
-    - incoming_listener handles everything else (AI + intent)
+    - Added call to incoming_listener_node after transcription
+    - incoming_listener_node handles everything else (AI + intent)
     """
     try:
         # === YOUR EXISTING CODE (NO CHANGES) ===
@@ -244,13 +243,13 @@ async def process_audio(
                 "stats": stats
             })
         
-        # === NEW CODE: Route to incoming_listener ===
+        # === NEW CODE: Route to incoming_listener_node ===
         
         # Get lead_id from websocket
         lead_id = getattr(websocket, 'lead_id', 'unknown')
         
         # Create state
-        state = WorkflowState(
+        state = OptimizedWorkflowState(
             lead_id=lead_id,
             conversation_thread=[],
             pending_action=None
@@ -264,8 +263,10 @@ async def process_audio(
             "audio_bytes": final_audio   # Original audio
         }
         
-        # Route to incoming_listener (it handles everything else)
-        await incoming_listener(state, message_data, websocket)
+        # Route to incoming_listener_node (it handles everything else)
+        from nodes.optimized_incoming_listener import incoming_listener_node
+
+        await incoming_listener_node(state, message_data, websocket)
         
         print("✅ Audio processing complete")
             

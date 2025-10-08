@@ -12,9 +12,9 @@ import re
 from database.crud import DBManager
 from database.db import AsyncSessionLocal
 from utils.context_builder import ContextBuilder
-from nodes.intent_detector import intent_detector_llm
+from nodes.unified_intelligence_agent import UnifiedIntelligenceAgent
 from services.email_service import send_email
-from state.workflow_state import WorkflowState
+from state.optimized_workflow_state import OptimizedWorkflowState
 import os
 
 
@@ -28,6 +28,7 @@ class EmailMonitor:
         self.imap_connection = None
         self.is_running = False
         self.last_check_time = None
+        self.intelligence_agent = UnifiedIntelligenceAgent()
     
     async def start_monitoring(self):
         """Start email monitoring loop"""
@@ -65,345 +66,198 @@ class EmailMonitor:
                 pass
         print("📧 Email monitor stopped.")
     
-    def connect_to_imap(self):
-        """Connect to IMAP server"""
-        try:
-            if self.imap_connection:
-                # Test if connection is alive
-                try:
-                    self.imap_connection.noop()
-                    return self.imap_connection
-                except:
-                    self.imap_connection = None
-            
-            # Create new connection
-            mail = imaplib.IMAP4_SSL(self.imap_server, self.imap_port)
-            mail.login(self.username, self.password)
-            mail.select('INBOX')
-            
-            self.imap_connection = mail
-            return mail
-            
-        except Exception as e:
-            print(f"❌ IMAP connection error: {e}")
-            return None
-    
     async def check_inbox(self):
-        """Check inbox for new messages"""
+        """Check inbox for new emails"""
         try:
-            mail = self.connect_to_imap()
-            if not mail:
-                return
+            # Connect if not connected
+            if not self.imap_connection:
+                self.imap_connection = imaplib.IMAP4_SSL(self.imap_server, self.imap_port)
+                self.imap_connection.login(self.username, self.password)
             
-            # Search for unseen messages
-            status, message_ids = mail.search(None, 'UNSEEN')
+            # Select inbox
+            self.imap_connection.select('INBOX')
+            
+            # Search for unseen emails
+            status, messages = self.imap_connection.search(None, 'UNSEEN')
             
             if status != 'OK':
-                print("❌ Failed to search inbox")
+                print("❌ Failed to search emails")
                 return
             
-            # Get list of message IDs
-            message_id_list = message_ids[0].split()
+            email_ids = messages[0].split()
             
-            if not message_id_list:
-                # No new messages
+            if not email_ids:
                 return
             
-            print(f"📬 Found {len(message_id_list)} new email(s)")
+            print(f"📬 Found {len(email_ids)} new email(s)")
             
-            # Process each new email
-            for msg_id in message_id_list:
+            # Process each email
+            for email_id in email_ids:
                 try:
-                    await self.process_email(mail, msg_id)
+                    await self.process_email(email_id)
                 except Exception as e:
-                    print(f"❌ Error processing email {msg_id}: {e}")
-            
-            self.last_check_time = datetime.now()
-            
+                    print(f"❌ Failed to process email {email_id}: {e}")
+        
         except Exception as e:
-            print(f"❌ Error checking inbox: {e}")
+            print(f"❌ Inbox check failed: {e}")
+            self.imap_connection = None
     
-    async def process_email(self, mail, msg_id):
+    async def process_email(self, email_id):
         """Process a single email"""
         try:
             # Fetch email
-            status, msg_data = mail.fetch(msg_id, '(RFC822)')
+            status, msg_data = self.imap_connection.fetch(email_id, '(RFC822)')
             
             if status != 'OK':
+                print(f"❌ Failed to fetch email {email_id}")
                 return
             
             # Parse email
-            raw_email = msg_data[0][1]
-            email_message = email.message_from_bytes(raw_email)
+            email_body = msg_data[0][1]
+            email_message = email.message_from_bytes(email_body)
             
-            # Extract email data
-            email_data = self.extract_email_data(email_message)
+            # Extract email details
+            from_email = self._decode_header(email_message['From'])
+            subject = self._decode_header(email_message['Subject'])
             
-            print(f"📨 Processing email from: {email_data['from_email']}")
-            print(f"   Subject: {email_data['subject']}")
+            # Extract sender email address
+            sender_match = re.search(r'[\w\.-]+@[\w\.-]+', from_email)
+            sender_email = sender_match.group(0) if sender_match else from_email
             
-            # Process asynchronously
-            await self._process_email_async(email_data)
+            # Get email body
+            body = self._get_email_body(email_message)
             
-            # Mark as read
-            mail.store(msg_id, '+FLAGS', '\\Seen')
+            print(f"📧 Processing email from {sender_email}: {subject}")
             
+            # Process with database
+            async with AsyncSessionLocal() as db:
+                db_manager = DBManager(db)
+                
+                # Get or create lead by email
+                lead = await db_manager.get_lead_by_email(sender_email)
+                if not lead:
+                    lead = await db_manager.create_lead({
+                        'email': sender_email,
+                        'channel': 'email',
+                        'status': 'new',
+                        'created_at': datetime.utcnow()
+                    })
+                
+                lead_id = str(lead.id)
+                
+                # Save incoming message
+                await db_manager.create_conversation_message({
+                    'lead_id': lead_id,
+                    'message': f"Subject: {subject}\n\n{body}",
+                    'direction': 'inbound',
+                    'channel': 'email',
+                    'timestamp': datetime.utcnow(),
+                    'metadata': {'subject': subject}
+                })
+                
+                # Build conversation history context
+                context_builder = ContextBuilder(db_manager)
+                conversation_history = await context_builder.get_conversation_context(
+                    lead_id,
+                    limit=10
+                )
+                
+                # Create optimized workflow state
+                state = OptimizedWorkflowState(
+                    session_id=f"email_{email_id.decode()}",
+                    lead_id=lead_id,
+                    current_message=body,
+                    channel="email",
+                    conversation_history=conversation_history,
+                    lead_context={
+                        'email': sender_email,
+                        'status': lead.status,
+                        'previous_interactions': len(conversation_history),
+                        'subject': subject
+                    }
+                )
+                
+                # Process with unified intelligence agent
+                print(f"🤖 Processing with Unified Intelligence Agent...")
+                result_state = await self.intelligence_agent.execute(state)
+                
+                # Extract response from intelligence output
+                intelligence_output = result_state.get('intelligence_output', {})
+                response_text = intelligence_output.get('response_text',
+                    'Thank you for your email. Our team will get back to you shortly.')
+                
+                # Send email response
+                email_sent = await send_email(
+                    to_email=sender_email,
+                    subject=f"Re: {subject}",
+                    body=response_text
+                )
+                
+                if email_sent:
+                    # Save outbound message
+                    await db_manager.create_conversation_message({
+                        'lead_id': lead_id,
+                        'message': response_text,
+                        'direction': 'outbound',
+                        'channel': 'email',
+                        'timestamp': datetime.utcnow()
+                    })
+                    
+                    # Update lead with latest intent and sentiment
+                    await db_manager.update_lead(lead_id, {
+                        'last_contacted': datetime.utcnow(),
+                        'last_message': body,
+                        'last_intent': intelligence_output.get('intent', 'unknown'),
+                        'last_sentiment': intelligence_output.get('sentiment', 'neutral'),
+                        'status': 'engaged'
+                    })
+                    
+                    print(f"✅ Email response sent to {sender_email}")
+        
         except Exception as e:
-            print(f"❌ Error processing email: {e}")
+            print(f"❌ Email processing error: {e}")
             import traceback
             traceback.print_exc()
     
-    def extract_email_data(self, email_message) -> Dict:
-        """Extract data from email message"""
-        # Get sender
-        from_header = email_message.get('From', '')
-        from_email = self._extract_email_address(from_header)
-        from_name = self._extract_name(from_header)
-        
-        # Get subject
-        subject = self._decode_header(email_message.get('Subject', ''))
-        
-        # Get message ID (for threading)
-        message_id = email_message.get('Message-ID', '').strip('<>')
-        in_reply_to = email_message.get('In-Reply-To', '').strip('<>')
-        references = email_message.get('References', '')
-        
-        # Get body
-        body = self._get_email_body(email_message)
-        
-        # Get timestamp
-        date_str = email_message.get('Date', '')
-        timestamp = email.utils.parsedate_to_datetime(date_str) if date_str else datetime.now()
-        
-        return {
-            'from_email': from_email,
-            'from_name': from_name,
-            'subject': subject,
-            'body': body,
-            'message_id': message_id,
-            'in_reply_to': in_reply_to,
-            'references': references,
-            'timestamp': timestamp
-        }
-    
-    def _extract_email_address(self, header: str) -> str:
-        """Extract email address from header"""
-        match = re.search(r'[\w\.-]+@[\w\.-]+', header)
-        return match.group(0) if match else ''
-    
-    def _extract_name(self, header: str) -> str:
-        """Extract name from email header"""
-        if '<' in header:
-            name = header.split('<')[0].strip().strip('"')
-            return name if name else 'Unknown'
-        return 'Unknown'
-    
-    def _decode_header(self, header: str) -> str:
+    def _decode_header(self, header_value):
         """Decode email header"""
-        if not header:
-            return ''
+        if not header_value:
+            return ""
         
-        decoded_parts = decode_header(header)
-        decoded_str = ''
+        decoded_parts = decode_header(header_value)
+        decoded_string = ""
         
         for part, encoding in decoded_parts:
             if isinstance(part, bytes):
-                decoded_str += part.decode(encoding or 'utf-8', errors='ignore')
+                decoded_string += part.decode(encoding or 'utf-8', errors='ignore')
             else:
-                decoded_str += part
+                decoded_string += part
         
-        return decoded_str
+        return decoded_string
     
-    def _get_email_body(self, email_message) -> str:
-        """Extract email body"""
-        body = ''
+    def _get_email_body(self, email_message):
+        """Extract email body text"""
+        body = ""
         
         if email_message.is_multipart():
             for part in email_message.walk():
                 content_type = part.get_content_type()
-                content_disposition = str(part.get('Content-Disposition', ''))
+                content_disposition = str(part.get("Content-Disposition"))
                 
-                # Skip attachments
-                if 'attachment' in content_disposition:
-                    continue
-                
-                # Get text/plain or text/html
-                if content_type == 'text/plain':
+                # Get text/plain parts
+                if content_type == "text/plain" and "attachment" not in content_disposition:
                     try:
-                        body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                        body = part.get_payload(decode=True).decode(errors='ignore')
                         break
-                    except:
-                        pass
-                elif content_type == 'text/html' and not body:
-                    try:
-                        html_body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
-                        body = self._html_to_text(html_body)
                     except:
                         pass
         else:
             try:
-                body = email_message.get_payload(decode=True).decode('utf-8', errors='ignore')
+                body = email_message.get_payload(decode=True).decode(errors='ignore')
             except:
                 body = str(email_message.get_payload())
         
         return body.strip()
-    
-    def _html_to_text(self, html: str) -> str:
-        """Convert HTML to plain text (simple version)"""
-        # Remove HTML tags
-        text = re.sub('<[^<]+?>', '', html)
-        # Remove extra whitespace
-        text = re.sub(r'\s+', ' ', text)
-        return text.strip()
-    
-    async def _process_email_async(self, email_data: Dict):
-        """Process email asynchronously with AI response"""
-        async with AsyncSessionLocal() as session:
-            db = DBManager(session)
-            context_builder = ContextBuilder(db)
-            
-            try:
-                # Find or create lead
-                lead = await db.get_or_create_lead(
-                    email=email_data['from_email'],
-                    name=email_data['from_name']
-                )
-                
-                print(f"✅ Lead identified: {lead.id} - {lead.name}")
-                
-                # Check if this is a reply to previous email
-                parent_message_id = None
-                if email_data['in_reply_to']:
-                    parent_conv = await db.get_conversation_by_message_id(
-                        email_data['in_reply_to']
-                    )
-                    if parent_conv:
-                        parent_message_id = parent_conv.id
-                        print(f"🔗 Email is reply to conversation #{parent_message_id}")
-                
-                # Save incoming email
-                await db.add_conversation(
-                    lead_id=lead.id,
-                    message=f"Subject: {email_data['subject']}\n\n{email_data['body']}",
-                    channel='email',
-                    sender='user',
-                    message_id=email_data['message_id'],
-                    parent_message_id=parent_message_id,
-                    metadata={
-                        'subject': email_data['subject'],
-                        'references': email_data['references']
-                    }
-                )
-                
-                # Build context
-                context = await context_builder.build_context_for_ai(
-                    lead_id=lead.id,
-                    current_message=email_data['body'],
-                    channel='email',
-                    max_messages=10
-                )
-                
-                print(f"📋 Context built: {context['conversation_type']}")
-                
-                # Create workflow state
-                state = WorkflowState(
-                    lead_id=str(lead.id),
-                    lead_data={
-                        'name': lead.name,
-                        'phone': lead.phone,
-                        'email': lead.email
-                    },
-                    client_type=lead.client_type or 'existing',
-                    conversation_thread=[
-                        f"User (Email): {email_data['subject']}",
-                        email_data['body']
-                    ],
-                    preferred_channel='email',
-                    lead_status=lead.lead_status,
-                    db_log=[],
-                    channel_history=['email']
-                )
-                
-                # Run intent detection
-                updated_state = intent_detector_llm(state)
-                
-                # Get AI response
-                ai_response = updated_state.get('agent_response') or \
-                             updated_state.get('conversation_thread', [])[-1] if updated_state.get('conversation_thread') else \
-                             "Thank you for your email. How can I assist you?"
-                
-                # Clean AI response
-                if ':' in ai_response:
-                    ai_response = ai_response.split(':', 1)[1].strip()
-                
-                print(f"🤖 AI Response: {ai_response[:100]}...")
-                
-                # Generate reply subject
-                reply_subject = email_data['subject']
-                if not reply_subject.startswith('RE:'):
-                    reply_subject = f"RE: {reply_subject}"
-                
-                # Build HTML email body
-                email_body = self._build_email_body(
-                    lead_name=lead.name,
-                    ai_response=ai_response
-                )
-                
-                # Send email reply
-                success = await send_email(
-                    to=email_data['from_email'],
-                    subject=reply_subject,
-                    body=email_body
-                )
-                
-                if success:
-                    # Save AI response
-                    await db.add_conversation(
-                        lead_id=lead.id,
-                        message=ai_response,
-                        channel='email',
-                        sender='ai',
-                        parent_message_id=parent_message_id,
-                        intent_detected=updated_state.get('intent_detected'),
-                        metadata={'subject': reply_subject}
-                    )
-                    
-                    # Update lead
-                    lead.last_contacted_at = datetime.now()
-                    lead.response_received = True
-                    await session.commit()
-                    
-                    print(f"✅ Email reply sent successfully")
-                else:
-                    print(f"❌ Failed to send email reply")
-                
-            except Exception as e:
-                print(f"❌ Error processing email: {e}")
-                import traceback
-                traceback.print_exc()
-    
-    def _build_email_body(self, lead_name: str, ai_response: str) -> str:
-        """Build HTML email body"""
-        html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
-            <p>Dear {lead_name},</p>
-            
-            <p>{ai_response}</p>
-            
-            <br>
-            <p>Best regards,<br>
-            <strong>TechCorp Support Team</strong></p>
-            
-            <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-            <p style="font-size: 12px; color: #666;">
-                This is an automated response from our AI assistant. 
-                If you need further assistance, please reply to this email.
-            </p>
-        </body>
-        </html>
-        """
-        return html
 
 
 # Singleton instance

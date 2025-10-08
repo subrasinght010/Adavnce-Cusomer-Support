@@ -1,0 +1,11 @@
+# 1️⃣ Check current DB revision
+alembic current
+
+# 2️⃣ Check latest revision available
+alembic heads
+
+# 3️⃣ Bring database up to date
+alembic upgrade head
+
+# 4️⃣ Generate new migration
+alembic revision --autogenerate -m "Added new column to users"
