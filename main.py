@@ -3,9 +3,7 @@ import asyncio
 import os
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any
 from contextlib import asynccontextmanager
-import signal
 from dotenv import load_dotenv
 import jwt
 import uvicorn
@@ -34,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 # Project imports
+from config.settings import settings as Settings
 from database.crud import DBManager
 from database.db import get_db, init_db
 from database.models import User
@@ -184,24 +183,40 @@ async def require_auth(request: Request):
 # -------------------------
 @app.get("/")
 async def root(request: Request):
-    token = request.cookies.get("access_token")
+    """
+    Root redirect logic:
+    - If user is authenticated → go to /home (dashboard)
+    - If user is NOT authenticated AND TTS enabled → go to /voice (public demo)
+    - Otherwise → show login page
+    """
+    token = ''#request.cookies.get("access_token")
+    
+    # Check if user is authenticated
     if token:
         try:
             verify_jwt_token(token)
+            # Authenticated user → send to dashboard
             return RedirectResponse(url="/home", status_code=303)
         except HTTPException:
+            # Invalid token, continue to login
             pass
+    
+    # Not authenticated - check if we should show public voice chat demo
+    if Settings.ENABLE_TTS in [False, "False", "false", None]:
+        # TTS enabled → show public voice chat demo
+        return RedirectResponse(url="/voice", status_code=303)
+    
+    # Default: show login page
     return templates.TemplateResponse("login.html", {"request": request})
 
 
-@app.get("/login")
-async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
-
-
-@app.get("/signup")
-async def signup_page(request: Request):
-    return templates.TemplateResponse("signup.html", {"request": request})
+@app.get("/voice")
+async def serve_voice_chat(request: Request):
+    """Serve the voice chat interface - PUBLIC ACCESS"""
+    return templates.TemplateResponse(
+        "voice_chat.html",
+        {"request": request}
+    )
 
 
 @app.get("/home", response_class=HTMLResponse)
@@ -221,6 +236,16 @@ async def home_page(
         "index.html",
         {"request": request, "user_id": user_obj.id, "username": user_obj.username},
     )
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.get("/signup")
+async def signup_page(request: Request):
+    return templates.TemplateResponse("signup.html", {"request": request})
 
 
 @app.post("/signup")
@@ -418,9 +443,163 @@ async def safe_send(websocket: WebSocket, data: dict) -> bool:
 # -------------------------
 # WebSocket: voice_chat
 # -------------------------
+# @app.websocket("/voice_chat")
+# async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
+#     """WebSocket endpoint for real-time voice communication"""
+    
+#     await websocket.accept()
+#     print("✅ WebSocket connected")
+#     print("Client-side VAD handles speech detection, server validates quality")
+
+#     # Initialize state
+#     validator = AudioValidator()
+#     lead_id_ref = {'value': None}
+#     audio_data_ref = {'value': b''}
+#     last_chunk_time_ref = {'value': datetime.now()}
+#     is_receiving_ref = {'value': False}
+#     silence_check_task = None
+
+#     try:
+#         # Start silence checker background task
+#         silence_check_task = asyncio.create_task(
+#             check_silence_loop(
+#                 audio_data_ref,
+#                 last_chunk_time_ref,
+#                 is_receiving_ref,
+#                 websocket,
+#                 validator,
+#                 safe_send
+#             )
+#         )
+        
+#         # Main message loop
+#         while True:
+#             if websocket.application_state != WebSocketState.CONNECTED:
+#                 print("WebSocket disconnected")
+#                 break
+            
+#             try:
+#                 message = await asyncio.wait_for(
+#                     websocket.receive(),
+#                     timeout=60.0
+#                 )
+                
+#             except asyncio.TimeoutError:
+#                 print("Timeout - sending keepalive ping")
+#                 await safe_send(websocket, {
+#                     "type": "ping",
+#                     "stats": validator.get_stats()
+#                 })
+#                 continue
+                
+#             except WebSocketDisconnect:
+#                 print("Client disconnected gracefully")
+#                 break
+
+#             # Handle JSON control messages
+#             if "text" in message:
+#                 try:
+#                     data = json.loads(message["text"])
+#                     should_break = await handle_text_message(
+#                         data,
+#                         lead_id_ref,
+#                         is_receiving_ref,
+#                         last_chunk_time_ref,
+#                         audio_data_ref,
+#                         websocket,
+#                         validator,
+#                         safe_send
+#                     )
+#                     if should_break:
+#                         break
+                        
+#                 except json.JSONDecodeError as e:
+#                     print(f"JSON decode error: {e}")
+#                     continue
+                    
+#                 except Exception as e:
+#                     print(f"Error handling text message: {e}")
+#                     import traceback
+#                     traceback.print_exc()
+#                     continue
+
+#             # Handle binary audio data
+#             elif "bytes" in message:
+#                 chunk = message["bytes"]
+#                 await handle_audio_chunk(
+#                     chunk,
+#                     audio_data_ref,
+#                     is_receiving_ref,
+#                     last_chunk_time_ref,
+#                     websocket,
+#                     validator,
+#                     safe_send
+#                 )
+
+#     except WebSocketDisconnect:
+#         print("Client disconnected during communication")
+        
+#     except Exception as e:
+#         print(f"Unexpected error in voice_chat: {e}")
+#         import traceback
+#         traceback.print_exc()
+        
+#     finally:
+#         # Cleanup
+#         if silence_check_task and not silence_check_task.done():
+#             silence_check_task.cancel()
+#             try:
+#                 await silence_check_task
+#             except asyncio.CancelledError:
+#                 pass
+        
+#         # Process remaining audio
+#         if audio_data_ref.get('value'):
+#             print("Processing remaining audio buffer...")
+#             try:
+#                 if websocket.application_state == WebSocketState.CONNECTED:
+#                     await process_audio(
+#                         audio_data_ref['value'],
+#                         websocket,
+#                         validator,
+#                         safe_send
+#                     )
+#             except Exception as e:
+#                 print(f"Failed to process remaining audio: {e}")
+        
+#         # Print session statistics
+#         final_stats = validator.get_stats()
+#         print("=" * 50)
+#         print("Session Statistics:")
+#         print(f"  Total Chunks: {final_stats.get('total_received', 0)}")
+#         print(f"  Valid Chunks: {final_stats.get('total_valid', 0)}")
+#         print(f"  Total Data: {final_stats.get('total_bytes', 0) / 1024:.2f} KB")
+#         print(f"  Validation Rate: {final_stats.get('validation_rate', 0)*100:.1f}%")
+#         if 'avg_rms' in final_stats:
+#             print(f"  Avg RMS: {final_stats.get('avg_rms', 0):.3f}")
+#         print("=" * 50)
+        
+#         # Close database session
+#         if db:
+#             try:
+#                 await db.close()
+#             except Exception as e:
+#                 print(f"Error closing database: {e}")
+        
+#         # Close WebSocket
+#         if websocket.application_state == WebSocketState.CONNECTED:
+#             try:
+#                 await websocket.close()
+#                 print("WebSocket closed cleanly")
+#             except Exception as e:
+#                 print(f"Error closing WebSocket: {e}")
+
+# -------------------------
+# WebSocket: voice_chat (UPDATED)
+# -------------------------
 @app.websocket("/voice_chat")
 async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
-    """WebSocket endpoint for real-time voice communication"""
+    """WebSocket endpoint for real-time voice communication with conversation display"""
     
     await websocket.accept()
     print("✅ WebSocket connected")
@@ -450,30 +629,28 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
         # Main message loop
         while True:
             if websocket.application_state != WebSocketState.CONNECTED:
-                print("WebSocket disconnected")
                 break
             
             try:
-                message = await asyncio.wait_for(
-                    websocket.receive(),
-                    timeout=60.0
-                )
+                # Receive message (can be binary audio or JSON control)
+                message = await websocket.receive()
                 
-            except asyncio.TimeoutError:
-                print("Timeout - sending keepalive ping")
-                await safe_send(websocket, {
-                    "type": "ping",
-                    "stats": validator.get_stats()
-                })
-                continue
+                # Handle different message types
+                if "bytes" in message:
+                    # Binary audio data
+                    chunk = message["bytes"]
+                    await handle_audio_chunk(
+                        chunk,
+                        audio_data_ref,
+                        is_receiving_ref,
+                        last_chunk_time_ref,
+                        websocket,
+                        validator,
+                        safe_send  # Add this parameter
+                    )
                 
-            except WebSocketDisconnect:
-                print("Client disconnected gracefully")
-                break
-
-            # Handle JSON control messages
-            if "text" in message:
-                try:
+                elif "text" in message:
+                    # JSON control messages
                     data = json.loads(message["text"])
                     should_break = await handle_text_message(
                         data,
@@ -483,37 +660,19 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                         audio_data_ref,
                         websocket,
                         validator,
-                        safe_send
+                        safe_send  # Add this parameter
                     )
+                    
                     if should_break:
                         break
-                        
-                except json.JSONDecodeError as e:
-                    print(f"JSON decode error: {e}")
-                    continue
-                    
-                except Exception as e:
-                    print(f"Error handling text message: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    continue
-
-            # Handle binary audio data
-            elif "bytes" in message:
-                chunk = message["bytes"]
-                await handle_audio_chunk(
-                    chunk,
-                    audio_data_ref,
-                    is_receiving_ref,
-                    last_chunk_time_ref,
-                    websocket,
-                    validator,
-                    safe_send
-                )
-
-    except WebSocketDisconnect:
-        print("Client disconnected during communication")
-        
+            
+            except WebSocketDisconnect:
+                print("🔌 Client disconnected")
+                break
+            except Exception as e:
+                print(f"Error processing message: {e}")
+                continue
+    
     except Exception as e:
         print(f"Unexpected error in voice_chat: {e}")
         import traceback
@@ -568,7 +727,6 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                 print("WebSocket closed cleanly")
             except Exception as e:
                 print(f"Error closing WebSocket: {e}")
-
 
 # -------------------------
 # Main entry

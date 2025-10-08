@@ -6,10 +6,9 @@ Uses environment-based config from config/environments.py
 
 import os
 from config.environments import get_config
-
 # Get configuration based on environment
-settings = get_config()
-
+from dotenv import load_dotenv
+load_dotenv()
 # Add any additional settings not in environments.py
 class Settings:
     """Extended settings with additional attributes"""
@@ -51,6 +50,8 @@ class Settings:
         
         # SendGrid
         self.SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
+
+        self.ENABLE_TTS = os.getenv('ENABLE_TTS', 'false').lower() == 'true'
 
 # Create singleton instance
 settings = Settings()

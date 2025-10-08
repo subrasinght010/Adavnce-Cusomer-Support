@@ -85,3 +85,22 @@ TRACK_LINK_CLICKS=false
 # Debug Mode
 DEBUG=false
 LOG_LEVEL=INFO
+
+
+# ========== TTS CONFIGURATION ==========
+# Set to true to enable Text-to-Speech responses
+# Set to false for text-only mode (Terminal + Frontend display)
+ENABLE_TTS=false
+
+# TTS Provider (openai, elevenlabs, google, azure)
+TTS_PROVIDER=openai
+
+# Voice selection
+TTS_VOICE=alloy
+
+# OpenAI TTS Model (tts-1 or tts-1-hd for higher quality)
+OPENAI_TTS_MODEL=tts-1
+
+# ElevenLabs (optional - only if using ElevenLabs)
+# ELEVENLABS_API_KEY=your_key_here
+# ELEVENLABS_VOICE_ID=your_voice_id_here

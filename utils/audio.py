@@ -185,6 +185,113 @@ async def preprocess_audio(audio_bytes: bytes) -> bytes:
 
 # ==================== MAIN PROCESSING ====================
 
+# async def process_audio(
+#     audio_bytes: bytes,
+#     websocket: WebSocket,
+#     validator: AudioValidator,
+#     safe_send: Callable = None
+# ):
+#     """
+#     Process audio: quality check → STT → route to incoming_listener_node
+#     """
+#     try:
+#         # === YOUR EXISTING CODE (NO CHANGES) ===
+#         # Resample if needed
+#         if NEEDS_RESAMPLING:
+#             processed_bytes = await resample_audio(audio_bytes, INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE)
+#         else:
+#             processed_bytes = audio_bytes
+
+#         # Analyze quality
+#         quality = await analyze_audio_quality(processed_bytes, OUTPUT_SAMPLE_RATE)
+#         if not quality.get('is_technically_valid', True):
+#             print("⚠️ Quality check failed")
+#             return
+
+#         # Preprocess
+#         final_audio = await preprocess_audio(processed_bytes)
+
+#         # Save WAV (optional)
+#         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+#         filename = f"/Users/subrat/Desktop/Multi-Agent-System/audio_data/audio_{timestamp}.wav"
+#         save_float32_to_wav(final_audio, filename=filename, sample_rate=OUTPUT_SAMPLE_RATE)
+
+#         # Transcribe (STT)
+#         transcription = await transcribe_with_faster_whisper(final_audio)
+        
+#         if not transcription or not transcription.strip():
+#             print("ℹ️ No speech detected")
+#             return
+        
+#         print(f"📝 Transcription: {transcription}")
+        
+#         # Send transcription to client
+#         if safe_send:
+#             stats = validator.get_stats()
+#             await safe_send(websocket, {
+#                 "type": "transcription",
+#                 "text": transcription,
+#                 "timestamp": datetime.now().isoformat(),
+#                 "audio_quality": {
+#                     'duration': quality.get('duration'),
+#                     'rms_energy': quality.get('rms_energy')
+#                 },
+#                 "stats": stats
+#             })
+        
+#         # === NEW CODE: Route to incoming_listener_node ===
+        
+#         # Get lead_id from websocket
+#         lead_id = getattr(websocket, 'lead_id', 'unknown')
+        
+#         # Import the node instance
+#         from nodes.optimized_incoming_listener import incoming_listener_node
+        
+#         # Create state with ALL required fields
+#         state = {
+#             "lead_id": lead_id,
+#             "conversation_thread": [],
+#             "pending_action": None,
+#             "current_message": transcription,  # Set the transcription here
+#             "voice_file_url": None,
+#             "channel": "web_call",
+#             "lead_data": {},
+#             "intelligence_output": None,
+#             "completed_actions": [],
+#             "errors": [],
+#             "is_simple_message": False,
+#             "cache_hit": False,
+#             "cache_key": None,
+#             "cache_saves_made": 0,
+#             "audio_bytes": final_audio,
+#             "websocket": websocket
+#         }
+        
+#         # IMPORTANT: Call execute() directly, not __call__
+#         # Since we're already in an async context
+#         print(f"🔄 Routing to incoming_listener_node...")
+#         result = await incoming_listener_node.execute(state)  # Changed this line!
+        
+#         # The result should be the updated state
+#         print(f"✅ Audio processing complete. Intent: {result.get('intelligence_output', {}).get('intent', 'unknown')}")
+        
+#         # Send AI response back to client if available
+#         if safe_send and result.get('intelligence_output'):
+#             intelligence = result['intelligence_output']
+#             await safe_send(websocket, {
+#                 "type": "ai_response",
+#                 "text": intelligence.get('response_text', ''),
+#                 "intent": intelligence.get('intent'),
+#                 "timestamp": datetime.now().isoformat()
+#             })
+            
+#     except Exception as e:
+#         print(f"❌ Audio processing failed: {e}")
+#         import traceback
+#         traceback.print_exc()
+
+# In utils/audio.py
+
 async def process_audio(
     audio_bytes: bytes,
     websocket: WebSocket,
@@ -192,14 +299,12 @@ async def process_audio(
     safe_send: Callable = None
 ):
     """
-    Process audio: quality check → STT → route to incoming_listener_node
-    
-    Changes from original:
-    - Added call to incoming_listener_node after transcription
-    - incoming_listener_node handles everything else (AI + intent)
+    Process audio: quality check → STT → AI processing → Response
+    Mode depends on ENABLE_TTS setting
     """
     try:
-        # === YOUR EXISTING CODE (NO CHANGES) ===
+        # === STEP 1: AUDIO PREPROCESSING & TRANSCRIPTION ===
+        
         # Resample if needed
         if NEEDS_RESAMPLING:
             processed_bytes = await resample_audio(audio_bytes, INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE)
@@ -227,9 +332,12 @@ async def process_audio(
             print("ℹ️ No speech detected")
             return
         
-        print(f"📝 Transcription: {transcription}")
+        # === PRINT USER MESSAGE ===
+        print("\n" + "="*80)
+        print(f"👤 USER: {transcription}")
+        print("="*80)
         
-        # Send transcription to client
+        # Send transcription to client for real-time display
         if safe_send:
             stats = validator.get_stats()
             await safe_send(websocket, {
@@ -243,38 +351,139 @@ async def process_audio(
                 "stats": stats
             })
         
-        # === NEW CODE: Route to incoming_listener_node ===
+        # === STEP 2: AI PROCESSING ===
         
         # Get lead_id from websocket
         lead_id = getattr(websocket, 'lead_id', 'unknown')
         
-        # Create state
-        state = OptimizedWorkflowState(
-            lead_id=lead_id,
-            conversation_thread=[],
-            pending_action=None
-        )
+        # Import nodes
+        from nodes.optimized_incoming_listener import incoming_listener_node
+        from nodes.unified_intelligence_agent import unified_intelligence_agent
         
-        # Prepare message data
-        message_data = {
+        # Create initial state
+        state = {
             "lead_id": lead_id,
-            "message": transcription,    # Transcribed text
-            "channel": "web_call",       # Indicates web call
-            "audio_bytes": final_audio   # Original audio
+            "conversation_thread": [],
+            "conversation_history": [],
+            "pending_action": None,
+            "current_message": transcription,
+            "voice_file_url": None,
+            "channel": "web_call",
+            "lead_data": {},
+            "intelligence_output": None,
+            "completed_actions": [],
+            "errors": [],
+            "is_simple_message": False,
+            "cache_hit": False,
+            "cache_key": None,
+            "cache_saves_made": 0,
+            "llm_calls_made": 0,
+            "needs_rag": False,
+            "audio_bytes": final_audio,
+            "websocket": websocket
         }
         
-        # Route to incoming_listener_node (it handles everything else)
-        from nodes.optimized_incoming_listener import incoming_listener_node
-
-        await incoming_listener_node(state, message_data, websocket)
+        # Run incoming listener (fast path check)
+        print(f"🔄 Processing with AI...")
+        state = await incoming_listener_node.execute(state)
         
-        print("✅ Audio processing complete")
+        # Check if fast path was used
+        if not (state.get("is_simple_message") or state.get("cache_hit")):
+            # Run full AI processing
+            state = await unified_intelligence_agent.execute(state)
+        
+        # === STEP 3: EXTRACT AI RESPONSE ===
+        
+        intelligence_output = state.get('intelligence_output', {})
+        response_text = intelligence_output.get('response_text', '')
+        intent = intelligence_output.get('intent', 'unknown')
+        confidence = intelligence_output.get('intent_confidence', 0.0)
+        sentiment = intelligence_output.get('sentiment', 'neutral')
+        
+        if not response_text:
+            response_text = "I'm sorry, I didn't understand that. Could you please rephrase?"
+        
+        # === PRINT AI RESPONSE ===
+        print(f"🤖 AI: {response_text}")
+        print(f"📊 Intent: {intent} | Confidence: {confidence:.2%} | Sentiment: {sentiment}")
+        
+        # === STEP 4: CONDITIONAL TTS OR TEXT-ONLY ===
+        
+        from tools.tts import generate_speech, is_tts_enabled
+        
+        if is_tts_enabled():
+            print(f"🔊 Generating TTS response...")
+            
+            try:
+                # Generate TTS audio
+                tts_result = await generate_speech(response_text)
+                
+                if tts_result and safe_send:
+                    # Send both text and audio response
+                    await safe_send(websocket, {
+                        "type": "ai_response_with_audio",
+                        "text": response_text,
+                        "audio_data": tts_result["audio_data"],
+                        "audio_format": tts_result["format"],
+                        "intent": intent,
+                        "confidence": confidence,
+                        "sentiment": sentiment,
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    print(f"✅ TTS audio sent to client")
+                else:
+                    # Fallback to text-only if TTS fails
+                    if safe_send:
+                        await safe_send(websocket, {
+                            "type": "ai_response",
+                            "text": response_text,
+                            "intent": intent,
+                            "confidence": confidence,
+                            "sentiment": sentiment,
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    print(f"⚠️ TTS failed, sent text only")
+                    
+            except Exception as tts_error:
+                print(f"❌ TTS error: {tts_error}")
+                # Send text-only response
+                if safe_send:
+                    await safe_send(websocket, {
+                        "type": "ai_response",
+                        "text": response_text,
+                        "intent": intent,
+                        "confidence": confidence,
+                        "sentiment": sentiment,
+                        "timestamp": datetime.now().isoformat()
+                    })
+        else:
+            # TEXT-ONLY MODE (Terminal + Frontend)
+            print(f"📝 Text-only mode: Sending to frontend")
+            
+            if safe_send:
+                await safe_send(websocket, {
+                    "type": "ai_response",
+                    "text": response_text,
+                    "intent": intent,
+                    "confidence": confidence,
+                    "sentiment": sentiment,
+                    "timestamp": datetime.now().isoformat()
+                })
+        
+        print("="*80 + "\n")
             
     except Exception as e:
         print(f"❌ Audio processing failed: {e}")
         import traceback
         traceback.print_exc()
-
+        
+        # Send error to client
+        if safe_send:
+            await safe_send(websocket, {
+                "type": "error",
+                "message": "Sorry, I encountered an error processing your message.",
+                "timestamp": datetime.now().isoformat()
+            })
 # ==================== WEBSOCKET HANDLERS ====================
 
 async def check_silence_loop(
@@ -371,6 +580,42 @@ async def handle_text_message(
 
     return False
 
+# async def handle_audio_chunk(
+#     chunk: bytes,
+#     audio_data_ref: dict,
+#     is_receiving_ref: dict,
+#     last_chunk_time_ref: dict,
+#     websocket: WebSocket,
+#     validator: AudioValidator,
+#     safe_send: Callable
+# ):
+#     """Handle incoming audio binary data"""
+    
+#     if not validator.validate_chunk(chunk):
+#         return
+    
+#     is_receiving_ref['value'] = True
+#     last_chunk_time_ref['value'] = datetime.now()
+#     audio_data_ref['value'] += chunk
+    
+#     # Calculate duration at INPUT rate
+#     duration = len(audio_data_ref['value']) / (INPUT_SAMPLE_RATE * BYTES_PER_SAMPLE)
+    
+#     if duration > MAX_AUDIO_DURATION:
+#         print(f"Max duration reached ({duration:.1f}s) - processing")
+#         await process_audio(audio_data_ref['value'], websocket, validator, safe_send)
+#         audio_data_ref['value'] = b''
+#         is_receiving_ref['value'] = False
+    
+#     # Log progress every second
+#     if len(audio_data_ref['value']) % (INPUT_SAMPLE_RATE * BYTES_PER_SAMPLE) < len(chunk):
+#         stats = validator.get_stats()
+#         print(f"Buffer: {duration:.2f}s | Chunks: {stats.get('total_received', 0)} | "
+#               f"Valid: {stats.get('validation_rate', 0)*100:.1f}%")
+        
+
+# In utils/audio.py
+
 async def handle_audio_chunk(
     chunk: bytes,
     audio_data_ref: dict,
@@ -378,7 +623,7 @@ async def handle_audio_chunk(
     last_chunk_time_ref: dict,
     websocket: WebSocket,
     validator: AudioValidator,
-    safe_send: Callable
+    safe_send: Callable  # ADD THIS
 ):
     """Handle incoming audio binary data"""
     
@@ -404,8 +649,6 @@ async def handle_audio_chunk(
         print(f"Buffer: {duration:.2f}s | Chunks: {stats.get('total_received', 0)} | "
               f"Valid: {stats.get('validation_rate', 0)*100:.1f}%")
         
-
-
 # === KEEP ALL YOUR OTHER FUNCTIONS AS-IS ===
 # - resample_audio()
 # - analyze_audio_quality()
