@@ -1,11 +1,10 @@
 """
 Language Model Handler - Mistral 7B
-Supports both local (Transformers) and Ollama deployment
+Supports both Ollama (recommended) and Transformers deployment
 """
 
 import os
 import json
-from typing import Optional
 
 # Choose deployment method
 USE_OLLAMA = os.getenv("USE_OLLAMA", "true").lower() == "true"
@@ -16,7 +15,8 @@ if USE_OLLAMA:
     class LanguageModel:
         def __init__(self):
             self.url = "http://localhost:11434/api/generate"
-            self.model = "mistral"
+            self.model = os.getenv("LLM_MODEL", "mistral")
+            print(f"🤖 LLM: Ollama/{self.model} (Optimized llama.cpp)")
         
         def generate(self, prompt: str, max_tokens: int = 512) -> str:
             """Generate response using Ollama"""
@@ -28,11 +28,11 @@ if USE_OLLAMA:
                         "prompt": prompt,
                         "stream": False,
                         "options": {
-                            "temperature": 0.7,
+                            "temperature": float(os.getenv("LLM_TEMPERATURE", "0.3")),
                             "num_predict": max_tokens
                         }
                     },
-                    timeout=30
+                    timeout=60
                 )
                 
                 if response.status_code == 200:
@@ -49,7 +49,7 @@ if USE_OLLAMA:
         def _fallback_response(self) -> str:
             """Fallback response if LLM fails"""
             return json.dumps({
-                "immediate_response": "I'm having trouble processing that right now. Could you please try again?",
+                "immediate_response": "I'm having trouble processing your request. Could you please rephrase that?",
                 "intent": "general_inquiry",
                 "entities": {},
                 "needs_clarification": True,
@@ -62,8 +62,8 @@ else:
     
     class LanguageModel:
         def __init__(self):
-            model_name = "mistralai/Mistral-7B-Instruct-v0.2"
-            print(f"🔄 Loading {model_name}...")
+            model_name = os.getenv("LLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.2")
+            print(f"🔄 Loading {model_name} with Transformers...")
             
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.model = AutoModelForCausalLM.from_pretrained(
@@ -74,6 +74,7 @@ else:
             )
             
             print(f"✅ Model loaded on {self.model.device}")
+            print(f"🤖 LLM: Transformers/{model_name}")
         
         def generate(self, prompt: str, max_tokens: int = 512) -> str:
             """Generate response using Transformers"""
@@ -84,7 +85,7 @@ else:
                     outputs = self.model.generate(
                         **inputs,
                         max_new_tokens=max_tokens,
-                        temperature=0.7,
+                        temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
                         do_sample=True,
                         top_p=0.9,
                         pad_token_id=self.tokenizer.eos_token_id
@@ -104,9 +105,12 @@ else:
         def _fallback_response(self) -> str:
             """Fallback response if LLM fails"""
             return json.dumps({
-                "immediate_response": "I'm having trouble processing that right now. Could you please try again?",
+                "immediate_response": "I'm having trouble processing your request. Could you please rephrase that?",
                 "intent": "general_inquiry",
                 "entities": {},
-                "needs_clarification":True,
+                "needs_clarification": True,
                 "actions": []
             })
+
+# Create singleton instance
+llm = LanguageModel()

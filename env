@@ -104,3 +104,7 @@ OPENAI_TTS_MODEL=tts-1
 # ElevenLabs (optional - only if using ElevenLabs)
 # ELEVENLABS_API_KEY=your_key_here
 # ELEVENLABS_VOICE_ID=your_voice_id_here
+LLM_TEMPERATURE=0.3
+USE_OLLAMA=true
+LLM_MODEL=mistral
+USE_WHISPER_CPP=Tru  # For 2x faster transcription

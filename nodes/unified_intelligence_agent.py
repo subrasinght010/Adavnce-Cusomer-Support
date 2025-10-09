@@ -129,258 +129,319 @@ class UnifiedIntelligenceAgent(BaseNode):
             f"Confidence: {intelligence_output.get('intent_confidence'):.2f}"
         )
         
-        return state
-        
+        return state   
 
-        async def _should_use_rag(self, message: str) -> bool:
-            """Quick check if message needs knowledge base"""
-            
-            rag_keywords = [
-                "price", "pricing", "cost", "how much",
-                "policy", "refund", "return", "warranty",
-                "product", "feature", "specification", "spec",
-                "compare", "difference", "vs",
-                "shipping", "delivery", "location",
-                "hours", "open", "close", "contact"
-            ]
-            
-            message_lower = message.lower()
-            return any(keyword in message_lower for keyword in rag_keywords)
+    async def _should_use_rag(self, message: str) -> bool:
+        """Quick check if message needs knowledge base"""
         
-        async def _get_rag_context(self, query: str) -> str:
-            """
-            Retrieve relevant documents from YOUR knowledge base
-            """
-            try:
-                # Use YOUR existing RAG function
-                results = query_knowledge_base(
-                    query=query,
-                    top_k=3,
-                    relevance_threshold=0.7
-                )
-                
-                if not results:
-                    self.logger.info("No relevant documents found in knowledge base")
-                    return ""
-                
-                # Format context
-                context_parts = []
-                for i, doc in enumerate(results, 1):
-                    source = doc.get("metadata", {}).get("source", "Unknown")
-                    content = doc.get("content", "")
-                    context_parts.append(f"[Source {i}: {source}]\n{content}")
-                
-                context = "\n\n".join(context_parts)
-                self.logger.info(f"✓ Retrieved {len(results)} relevant documents")
-                
-                return context
+        rag_keywords = [
+            "price", "pricing", "cost", "how much",
+            "policy", "refund", "return", "warranty",
+            "product", "feature", "specification", "spec",
+            "compare", "difference", "vs",
+            "shipping", "delivery", "location",
+            "hours", "open", "close", "contact"
+        ]
+        
+        message_lower = message.lower()
+        return any(keyword in message_lower for keyword in rag_keywords)
+    
+    async def _get_rag_context(self, query: str) -> str:
+        """
+        Retrieve relevant documents from YOUR knowledge base
+        """
+        try:
+            # Use YOUR existing RAG function
+            results = query_knowledge_base(
+                query=query,
+                top_k=3,
+                relevance_threshold=0.7
+            )
             
-            except Exception as e:
-                self.logger.error(f"RAG query failed: {e}")
+            if not results:
+                self.logger.info("No relevant documents found in knowledge base")
                 return ""
+            
+            # Format context
+            context_parts = []
+            for i, doc in enumerate(results, 1):
+                source = doc.get("metadata", {}).get("source", "Unknown")
+                content = doc.get("content", "")
+                context_parts.append(f"[Source {i}: {source}]\n{content}")
+            
+            context = "\n\n".join(context_parts)
+            self.logger.info(f"✓ Retrieved {len(results)} relevant documents")
+            
+            return context
         
-        def _create_unified_prompt(
-            self,
-            message: str,
-            conversation_history: list,
-            lead_data: dict,
-            rag_context: str
-        ) -> str:
-            """Create ONE comprehensive prompt that gets ALL information"""
-            
-            # Format conversation history
-            history_text = ""
-            if conversation_history:
-                recent_history = conversation_history[-5:]
-                history_text = "\n".join([
-                    f"{msg['role'].upper()}: {msg['content']}"
-                    for msg in recent_history
-                ])
-            
-            # Format lead data
-            lead_context = ""
-            if lead_data:
-                lead_context = f"""
-    LEAD INFORMATION:
-    - Name: {lead_data.get('name', 'Unknown')}
-    - Email: {lead_data.get('email', 'N/A')}
-    - Phone: {lead_data.get('phone', 'N/A')}
-    - Company: {lead_data.get('company', 'N/A')}
-    - Type: {lead_data.get('type', 'individual')}
-    """
-            
-            # Format RAG context
-            knowledge_section = ""
-            if rag_context:
-                knowledge_section = f"""
-    COMPANY KNOWLEDGE BASE:
-    {rag_context}
-
-    IMPORTANT: Use ONLY the knowledge base information above to answer. If the answer is not in the knowledge base, say you don't have that specific information.
-    """
-            
-            # The comprehensive prompt
-            prompt = f"""You are an AI assistant for a customer service system. Analyze the following and provide a COMPLETE structured response.
-
-    {lead_context}
-
-    CONVERSATION HISTORY:
-    {history_text if history_text else "No previous conversation"}
-
-    {knowledge_section}
-
-    CURRENT USER MESSAGE: "{message}"
-
-    TASK: Analyze this message and respond with a JSON object containing ALL of the following:
-
-    {{
-    "intent": "product_query|policy_query|pricing_query|complaint|callback_request|general_inquiry|technical_support|greeting",
-    "intent_confidence": 0.95,
-    "entities": {{
-        "product_name": "extracted product or null",
-        "budget": "extracted budget or null",
-        "phone_number": "extracted phone or null",
-        "email": "extracted email or null",
-        "preferred_time": "extracted time preference or null",
-        "issue_type": "type of issue or null"
-    }},
-    "sentiment": "positive|neutral|negative|very_negative",
-    "urgency": "low|medium|high|critical",
-    "language_detected": "en",
-    "response_text": "Your helpful, professional response to the customer",
-    "needs_clarification": false,
-    "clarification_question": null,
-    "next_actions": ["action1", "action2"],
-    "requires_human": false,
-    "used_knowledge_base": {bool},
-    "rag_sources_used": ["source1", "source2"]
-    }}
-
-    GUIDELINES:
-    1. Intent: Choose the most specific intent that matches
-    2. Confidence: 0.0-1.0 based on how certain you are
-    3. Entities: Extract ALL mentioned information
-    4. Sentiment: Overall emotional tone
-    5. Urgency: How quickly does this need attention?
-    6. Response: Generate helpful, professional response (2-4 sentences)
-    7. Clarification: Set to true ONLY if you need critical missing info
-    8. Next Actions: What should happen after this? Options:
-    - "send_response" (just send the response)
-    - "send_email_details" (send detailed info via email)
-    - "schedule_callback" (user wants callback)
-    - "escalate_to_human" (complex issue)
-    - "verify_data" (need to verify lead info)
-    9. Requires Human: Set to true for complaints, complex requests, or low confidence (<0.5)
-    10. Knowledge Base: Set used_knowledge_base to true if you used the company knowledge
-
-    CRITICAL: Respond ONLY with valid JSON. No markdown, no explanations, ONLY the JSON object."""
-
-            return prompt
+        except Exception as e:
+            self.logger.error(f"RAG query failed: {e}")
+            return ""
+    
+    def _create_unified_prompt(
+        self,
+        message: str,
+        conversation_history: list,
+        lead_data: dict,
+        rag_context: str = ""
+    ) -> str:
+        """
+        Create a comprehensive prompt that gets ALL information in ONE LLM call
         
-        async def _call_llm(self, prompt: str) -> str:
-            """Call YOUR LLM with the unified prompt"""
-            
-            try:
-                # Use YOUR existing LLM
-                # Adjust based on your LLM's API
-                
-                # Option 1: If your LLM has async method
-                if hasattr(self.llm, 'generate_async'):
-                    response = await self.llm.generate_async(prompt)
-                
-                # Option 2: If your LLM has ainvoke method
-                elif hasattr(self.llm, 'ainvoke'):
-                    response = await self.llm.ainvoke(prompt)
-                
-                # Option 3: If your LLM only has sync method
-                elif hasattr(self.llm, 'generate'):
-                    response = await asyncio.to_thread(self.llm.generate, prompt)
-                
-                # Option 4: Direct call
-                else:
-                    response = await asyncio.to_thread(self.llm, prompt)
-                
-                # Handle different response types
-                if isinstance(response, dict):
-                    return response.get("content", "") or response.get("text", "") or str(response)
-                elif isinstance(response, str):
-                    return response
-                else:
-                    return str(response)
-            
-            except Exception as e:
-                self.logger.error(f"LLM call failed: {e}")
-                raise
+        This is the KEY to the optimization - one detailed prompt instead of
+        multiple separate prompts for intent, entities, knowledge, etc.
+        """
         
-        def _parse_llm_response(self, llm_output: str) -> Dict[str, Any]:
-            """Parse LLM JSON response"""
-            
-            try:
-                # Clean response
-                cleaned = llm_output.strip()
-                
-                # Remove markdown code blocks
-                if cleaned.startswith("```json"):
-                    cleaned = cleaned[7:]
-                if cleaned.startswith("```"):
-                    cleaned = cleaned[3:]
-                if cleaned.endswith("```"):
-                    cleaned = cleaned[:-3]
-                
-                cleaned = cleaned.strip()
-                
-                # Parse JSON
-                parsed = json.loads(cleaned)
-                
-                # Validate required fields
-                required_fields = ["intent", "intent_confidence", "response_text", "next_actions"]
-                for field in required_fields:
-                    if field not in parsed:
-                        raise ValueError(f"Missing required field: {field}")
-                
-                return parsed
-            
-            except (json.JSONDecodeError, ValueError) as e:
-                self.logger.error(f"Failed to parse LLM response: {e}")
-                self.logger.debug(f"Raw response: {llm_output[:200]}...")
-                
-                # Return fallback response
-                return {
-                    "intent": "general_inquiry",
-                    "intent_confidence": 0.5,
-                    "entities": {},
-                    "sentiment": "neutral",
-                    "urgency": "medium",
-                    "language_detected": "en",
-                    "response_text": "I'm having trouble processing your request. Could you please rephrase that?",
-                    "needs_clarification": True,
-                    "clarification_question": "Could you provide more details?",
-                    "next_actions": ["wait_for_clarification"],
-                    "requires_human": False,
-                    "used_knowledge_base": False,
-                    "rag_sources_used": []
-                }
+        # Build lead context if available
+        lead_context = ""
+        if lead_data:
+            lead_context = f"""LEAD INFORMATION:
+        - Name: {lead_data.get('name', 'Unknown')}
+        - Phone: {lead_data.get('phone', 'Not provided')}
+        - Email: {lead_data.get('email', 'Not provided')}
+        - Client Type: {lead_data.get('client_type', 'new')}
+        - Previous Interactions: {lead_data.get('interaction_count', 0)}
+        """ 
+        # Build conversation history
+        history_text = ""
+        if conversation_history:
+            history_text = "\n".join([
+                f"{msg['role'].upper()}: {msg['content']}"
+                for msg in conversation_history[-5:]  # Last 5 messages for context
+            ])
         
-        def _rate_limit_response(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
-            """Return response when rate limited"""
+        # Build knowledge base section if RAG context available
+        knowledge_section = ""
+        if rag_context:
+            knowledge_section = f"""
+        RELEVANT COMPANY KNOWLEDGE:
+        {rag_context}
+
+        Use this information to answer the user's question accurately.
+        If the answer is not in the knowledge base, say you don't have that specific information.
+        """
             
-            state["intelligence_output"] = {
-                "intent": "rate_limited",
-                "intent_confidence": 1.0,
+        # The comprehensive prompt
+        prompt = f"""You are an AI assistant for a customer service system. Analyze the following and provide a COMPLETE structured response.
+
+        {lead_context}
+
+        CONVERSATION HISTORY:
+        {history_text if history_text else "No previous conversation"}
+
+        {knowledge_section}
+
+        CURRENT USER MESSAGE: "{message}"
+
+        TASK: Analyze this message and respond with a JSON object containing ALL of the following fields:
+
+        {{
+            "intent": "product_query|policy_query|pricing_query|complaint|callback_request|general_inquiry|technical_support|greeting",
+            "intent_confidence": 0.95,
+            "entities": {{
+                "product_name": "extracted product or null",
+                "budget": "extracted budget or null",
+                "phone_number": "extracted phone or null",
+                "email": "extracted email or null",
+                "preferred_time": "extracted time preference or null",
+                "issue_type": "type of issue or null"
+            }},
+            "sentiment": "positive|neutral|negative|very_negative",
+            "urgency": "low|medium|high|critical",
+            "language_detected": "en",
+            "response_text": "Your helpful, professional response to the customer",
+            "needs_clarification": false,
+            "clarification_question": null,
+            "next_actions": ["action1", "action2"],
+            "requires_human": false,
+            "used_knowledge_base": {str(bool(rag_context)).lower()},
+            "rag_sources_used": []
+        }}
+
+        GUIDELINES FOR EACH FIELD:
+
+        1. INTENT: Choose the most specific intent that matches the user's message
+        - greeting: hi, hello, hey
+        - product_query: asking about products/services
+        - pricing_query: asking about costs/prices
+        - policy_query: asking about policies/terms
+        - complaint: expressing dissatisfaction
+        - callback_request: wants to be called back
+        - technical_support: technical issues
+        - general_inquiry: anything else
+
+        2. INTENT_CONFIDENCE: Float between 0.0-1.0
+        - 0.9-1.0: Very clear intent
+        - 0.7-0.9: Clear intent
+        - 0.5-0.7: Somewhat clear
+        - Below 0.5: Unclear
+
+        3. ENTITIES: Extract ALL mentioned information from the message
+        - Set to null if not mentioned
+        - Extract exact values when possible
+
+        4. SENTIMENT: Overall emotional tone
+        - positive: happy, satisfied, grateful
+        - neutral: factual, neutral
+        - negative: unhappy, frustrated
+        - very_negative: angry, very upset
+
+        5. URGENCY: How quickly this needs attention
+        - low: general questions, no rush
+        - medium: normal requests
+        - high: complaints, time-sensitive
+        - critical: emergencies, very angry customers
+
+        6. RESPONSE_TEXT: Generate a helpful, professional response (2-4 sentences)
+        - Be empathetic and professional
+        - Address their question directly
+        - Offer next steps if relevant
+        - Use the knowledge base info if provided
+
+        7. NEEDS_CLARIFICATION: Set to true ONLY if you need critical missing information to help
+        - Don't ask for clarification on minor details
+        - Only if you genuinely cannot proceed
+
+        8. CLARIFICATION_QUESTION: What specific info do you need? (null if needs_clarification is false)
+
+        9. NEXT_ACTIONS: Array of actions that should happen next. Options:
+        - "send_response": Just send the response (most common)
+        - "send_email_details": Send detailed info via email
+        - "schedule_callback": User wants to be called back
+        - "escalate_to_human": Complex issue needs human
+        - "verify_data": Need to verify customer information
+        - "send_sms": Send SMS confirmation
+        - "update_crm": Update customer record
+
+        10. REQUIRES_HUMAN: Set to true for:
+            - Complaints (negative/very_negative sentiment)
+            - Complex requests you can't handle
+            - Low confidence (<0.5)
+            - User explicitly asks for human
+
+        11. USED_KNOWLEDGE_BASE: Set to true if you used the company knowledge section above
+
+        12. RAG_SOURCES_USED: List source names if you used knowledge base, empty array otherwise
+
+        CRITICAL INSTRUCTIONS:
+        - Respond with ONLY valid JSON
+        - NO markdown code blocks (no ```)
+        - NO explanations before or after the JSON
+        - NO additional text whatsoever
+        - Your response must start with {{ and end with }}
+        - Ensure all strings are properly quoted
+        - Ensure all numbers are not quoted
+        - Ensure booleans are lowercase (true/false, not True/False)
+
+        Your response must be ONLY the JSON object. Nothing else."""
+
+        return prompt
+
+
+    async def _call_llm(self, prompt: str) -> str:
+        """Call YOUR LLM with the unified prompt"""
+        
+        try:
+            # Use YOUR existing LLM
+            # Adjust based on your LLM's API
+            
+            # Option 1: If your LLM has async method
+            if hasattr(self.llm, 'generate_async'):
+                response = await self.llm.generate_async(prompt)
+            
+            # Option 2: If your LLM has ainvoke method
+            elif hasattr(self.llm, 'ainvoke'):
+                response = await self.llm.ainvoke(prompt)
+            
+            # Option 3: If your LLM only has sync method
+            elif hasattr(self.llm, 'generate'):
+                response = await asyncio.to_thread(self.llm.generate, prompt)
+            
+            # Option 4: Direct call
+            else:
+                response = await asyncio.to_thread(self.llm, prompt)
+            
+            # Handle different response types
+            if isinstance(response, dict):
+                return response.get("content", "") or response.get("text", "") or str(response)
+            elif isinstance(response, str):
+                return response
+            else:
+                return str(response)
+        
+        except Exception as e:
+            self.logger.error(f"LLM call failed: {e}")
+            raise
+    
+    def _parse_llm_response(self, llm_output: str) -> Dict[str, Any]:
+        """Parse LLM JSON response with robust error handling"""
+        
+        try:
+            # Clean response
+            cleaned = llm_output.strip()
+            
+            # Remove markdown code blocks if present
+            if cleaned.startswith("```json"):
+                cleaned = cleaned[7:]
+            elif cleaned.startswith("```"):
+                cleaned = cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            
+            cleaned = cleaned.strip()
+            
+            # Parse JSON
+            parsed = json.loads(cleaned)
+            
+            # Validate required fields with better error message
+            required_fields = ["intent", "intent_confidence", "response_text", "next_actions"]
+            missing = [f for f in required_fields if f not in parsed]
+            if missing:
+                raise ValueError(f"Missing required fields: {', '.join(missing)}")
+            
+            return parsed
+        
+        except (json.JSONDecodeError, ValueError) as e:
+            self.logger.error(f"Failed to parse LLM response: {e}")
+            self.logger.debug(f"Raw LLM output (first 500 chars): {llm_output[:500]}...")
+            
+            # Return fallback response
+            return {
+                "intent": "general_inquiry",
+                "intent_confidence": 0.5,
                 "entities": {},
                 "sentiment": "neutral",
-                "urgency": "low",
+                "urgency": "medium",
                 "language_detected": "en",
-                "response_text": "We're experiencing high volume. Please try again in a moment.",
-                "needs_clarification": False,
+                "response_text": "I'm having trouble processing your request. Could you please rephrase that?",
+                "needs_clarification": True,
+                "clarification_question": "Could you provide more details?",
                 "next_actions": ["send_response"],
                 "requires_human": False,
                 "used_knowledge_base": False,
                 "rag_sources_used": []
             }
-            
-            state = extract_quick_fields(state)
-            return state
+        
+    def _rate_limit_response(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
+        """Return response when rate limited"""
+        
+        state["intelligence_output"] = {
+            "intent": "rate_limited",
+            "intent_confidence": 1.0,
+            "entities": {},
+            "sentiment": "neutral",
+            "urgency": "low",
+            "language_detected": "en",
+            "response_text": "We're experiencing high volume. Please try again in a moment.",
+            "needs_clarification": False,
+            "next_actions": ["send_response"],
+            "requires_human": False,
+            "used_knowledge_base": False,
+            "rag_sources_used": []
+        }
+        
+        state = extract_quick_fields(state)
+        return state
 
 
 # Export singleton instance

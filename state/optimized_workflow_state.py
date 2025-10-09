@@ -458,11 +458,16 @@ TEMPLATE_RESPONSES = {
 
 
 def get_template_response(message: str) -> Optional[str]:
-    """Check if message matches a template"""
+    """Check if message matches a template - exact match only"""
     normalized = message.lower().strip()
     
-    for category, template in TEMPLATE_RESPONSES.items():
-        if any(pattern in normalized for pattern in template["patterns"]):
+    # Skip processing long messages (substantive content)
+    if len(normalized.split()) > 6:
+        return None
+    
+    # Exact match only
+    for _, template in TEMPLATE_RESPONSES.items():
+        if normalized in template["patterns"]:
             return template["response"]
     
     return None

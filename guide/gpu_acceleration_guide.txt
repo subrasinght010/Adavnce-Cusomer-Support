@@ -1,0 +1,185 @@
+cat > gpu_acceleration_guide.txt << 'EOF'
+================================================================================
+                M2 MAC GPU ACCELERATION GUIDE
+================================================================================
+
+UNDERSTANDING M2 ARCHITECTURE
+------------------------------
+- M2 has Unified Memory (CPU + GPU share 16GB RAM)
+- Apple Metal = GPU framework (NOT CUDA)
+- MPS = Metal Performance Shaders (PyTorch backend)
+
+
+CURRENT STATUS (CPU MODE)
+--------------------------
+Whisper:  Running on CPU (slow)
+Mistral:  Ollama uses Metal automatically ✓
+PyTorch:  Running on CPU (slow)
+
+
+ENABLE GPU ACCELERATION
+========================
+
+1. CHECK IF METAL AVAILABLE
+----------------------------
+python3 << 'PYTHON'
+import torch
+print("MPS Available:", torch.backends.mps.is_available())
+print("MPS Built:", torch.backends.mps.is_built())
+PYTHON
+
+
+2. FIX WHISPER (Use Metal)
+---------------------------
+File: tools/stt.py
+
+BEFORE:
+  device = "cuda" if torch.cuda.is_available() else "cpu"
+  model = whisper.load_model("medium").to('cpu')
+
+AFTER:
+  device = "mps" if torch.backends.mps.is_available() else "cpu"
+  model = whisper.load_model("medium").to(device)
+
+
+3. FIX OLLAMA (Already Optimized!)
+-----------------------------------
+Ollama automatically uses Metal - No changes needed!
+
+
+4. FIX OTHER PYTORCH MODELS
+----------------------------
+Any PyTorch code in your project:
+
+BEFORE:
+  device = "cuda" if torch.cuda.is_available() else "cpu"
+
+AFTER:
+  device = "mps" if torch.backends.mps.is_available() else "cpu"
+
+
+VERIFY GPU USAGE
+================
+
+Test 1: Check Whisper Device
+-----------------------------
+python3 << 'PYTHON'
+import whisper
+import torch
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+model = whisper.load_model("base").to(device)
+print(f"Whisper running on: {device}")
+print(f"Model device: {next(model.parameters()).device}")
+PYTHON
+
+
+Test 2: Monitor GPU Usage
+--------------------------
+# Run in separate terminal while testing
+sudo powermetrics --samplers gpu_power -i 1000
+
+
+Test 3: Speed Comparison
+-------------------------
+# Before (CPU): ~10-15 seconds for 30sec audio
+# After (Metal): ~3-5 seconds for 30sec audio
+
+
+EXPECTED PERFORMANCE GAINS
+===========================
+Whisper Transcription:  3-4x faster
+Mistral Inference:      Already optimized
+Overall latency:        50-70% reduction
+
+
+TROUBLESHOOTING
+===============
+
+Problem: "MPS not available"
+----------------------------
+# Update PyTorch for M2 support
+pip install --upgrade torch torchvision torchaudio
+
+
+Problem: "MPS backend out of memory"
+-------------------------------------
+# Reduce Whisper model size
+medium → small → base → tiny
+
+# Or process shorter audio chunks
+
+
+Problem: Still using CPU
+-------------------------
+# Check device assignment
+print(next(model.parameters()).device)
+
+# Should show: mps:0
+
+
+Problem: Slower with Metal
+---------------------------
+# First run is slower (compilation)
+# Second run onwards = faster
+# Warm up the model first
+
+
+COMPLETE CODE CHANGES
+======================
+
+File: tools/stt.py
+------------------
+import torch
+import whisper
+
+# Device selection
+device = "mps" if torch.backends.mps.is_available() else "cpu"
+print(f"🎯 Using device: {device}")
+
+# Load model to Metal
+model = whisper.load_model("medium").to(device)
+
+
+File: tools/language_model.py
+------------------------------
+# Ollama already uses Metal - no changes needed!
+
+
+MEMORY MANAGEMENT
+=================
+With 16GB RAM on M2:
+- System: 3GB
+- Python: 2GB  
+- Whisper (Metal): 3-4GB
+- Mistral (Metal): 6-8GB
+---------------
+Total: ~14-17GB (tight but works)
+
+If memory issues:
+- Use whisper "small" instead of "medium"
+- Close other apps
+- Monitor with Activity Monitor
+
+
+QUICK SETUP CHECKLIST
+======================
+☐ Update PyTorch: pip install --upgrade torch
+☐ Check MPS available: torch.backends.mps.is_available()
+☐ Change device in stt.py: .to(device)
+☐ Test transcription speed
+☐ Monitor GPU usage: sudo powermetrics
+
+
+BEFORE vs AFTER
+================
+BEFORE (CPU):
+- Whisper: 12 sec for 30sec audio
+- Mistral: Already on Metal
+- Total: Slow transcription
+
+AFTER (Metal):
+- Whisper: 4 sec for 30sec audio ⚡
+- Mistral: Same (already optimized)
+- Total: 3x faster overall!
+
+EOF

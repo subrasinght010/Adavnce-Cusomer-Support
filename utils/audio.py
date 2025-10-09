@@ -380,15 +380,18 @@ async def process_audio(
             "llm_calls_made": 0,
             "needs_rag": False,
             "audio_bytes": final_audio,
-            "websocket": websocket
+            "websocket": websocket,
+            "timestamp": datetime.now().isoformat()
         }
         
         # Run incoming listener (fast path check)
         print(f"🔄 Processing with AI...")
         state = await incoming_listener_node.execute(state)
+        print(f"✅ Incoming listener done. Simple: {state.get('is_simple_message')}, Cache hit: {state.get('cache_hit')}")
         
         # Check if fast path was used
         if not (state.get("is_simple_message") or state.get("cache_hit")):
+            print("→ Complex query, running full AI processing")
             # Run full AI processing
             state = await unified_intelligence_agent.execute(state)
         

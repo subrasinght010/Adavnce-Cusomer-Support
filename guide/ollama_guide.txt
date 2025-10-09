@@ -1,0 +1,115 @@
+cat > ollama_guide.txt << 'EOF'
+================================================================================
+                    OLLAMA QUICK SETUP GUIDE
+================================================================================
+
+1. INSTALL
+----------
+Mac:     brew install ollama
+Linux:   curl -fsSL https://ollama.com/install.sh | sh
+Windows: Download from https://ollama.com/download
+
+
+2. START OLLAMA
+---------------
+Auto-start:  brew services start ollama
+Manual:      ollama serve
+
+
+3. GET MODEL
+------------
+ollama pull mistral
+
+
+4. VERIFY
+---------
+ollama list
+curl http://localhost:11434/api/tags
+
+
+5. TEST
+-------
+ollama run mistral "Hello"
+
+
+6. USE IN PROJECT
+-----------------
+Check .env file has:
+  USE_OLLAMA=true
+  LLM_MODEL=mistral
+
+Then run: python main.py
+
+
+7. SHUTDOWN/STOP OLLAMA
+------------------------
+Stop service:        brew services stop ollama
+Kill process:        pkill ollama
+Stop + disable:      brew services stop ollama && brew services disable ollama
+Restart:             brew services restart ollama
+
+Check if running:    
+  brew services list | grep ollama
+  pgrep -fl ollama
+  lsof -i :11434
+
+Complete shutdown script:
+  pkill -f "python main.py"  # Stop your app
+  brew services stop ollama   # Stop Ollama
+
+
+8. TROUBLESHOOTING
+------------------
+Not running?     brew services start ollama
+Can't connect?   pkill ollama && brew services restart ollama
+Wrong model?     ollama pull mistral
+Check status:    brew services list | grep ollama
+Port in use?     lsof -i :11434
+
+
+9. USEFUL COMMANDS
+------------------
+List models:     ollama list
+Remove model:    ollama rm mistral
+Stop service:    brew services stop ollama
+View logs:       tail -f ~/Library/Logs/Homebrew/ollama/ollama.log
+Model info:      ollama show mistral
+
+
+10. MODELS TO TRY
+-----------------
+mistral   - Best balance (recommended) ~4.4GB
+llama3    - Latest/smartest ~4.7GB
+phi       - Fastest/lightweight ~1.6GB
+codellama - For coding tasks ~3.8GB
+gemma     - Google's model ~5.0GB
+
+
+11. MEMORY MANAGEMENT
+---------------------
+Check RAM usage:     
+  ps aux | grep ollama
+  Activity Monitor (GUI)
+
+Unload unused models:
+  ollama rm <model_name>
+
+Keep only what you need:
+  ollama list              # See all models
+  ollama rm llama3         # Remove unused ones
+
+
+12. ADVANCED CONFIGURATION
+---------------------------
+Set environment variables:
+  export OLLAMA_HOST=0.0.0.0:11434    # Change host/port
+  export OLLAMA_MODELS=~/my_models    # Custom model directory
+  export OLLAMA_NUM_PARALLEL=2        # Parallel requests
+
+Keep models after deletion:
+  export OLLAMA_KEEP_ALIVE=5m
+
+View all settings:
+  ollama help
+
+EOF

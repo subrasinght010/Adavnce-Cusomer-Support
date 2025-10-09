@@ -80,10 +80,11 @@ class OptimizedIncomingListener(BaseNode):
                 })
                 return state
         
-        self.logger.info(f"Processing message: {message[:50]}...")
+        self.logger.info(f"Processing message: {message}...")
         
         # ========== FAST PATH 1: Template Matching ==========
         template_response = await self._check_template(message)
+        print("Template response:", template_response)
         if template_response:
             self.logger.info("✓ Template match found (FAST PATH)")
             state["is_simple_message"] = True
