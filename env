@@ -85,7 +85,7 @@ TRACK_LINK_CLICKS=false
 # Debug Mode
 DEBUG=false
 LOG_LEVEL=INFO
-
+AUDIO_OUTPUT_DIR=./audio_data
 
 # ========== TTS CONFIGURATION ==========
 # Set to true to enable Text-to-Speech responses

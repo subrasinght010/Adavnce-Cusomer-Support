@@ -290,6 +290,7 @@ def extract_quick_fields(state: OptimizedWorkflowState) -> OptimizedWorkflowStat
     return state
 
 
+# state/optimized_workflow_state.py
 def calculate_lead_score(state: OptimizedWorkflowState) -> int:
     """
     Calculate lead score based on multiple factors
@@ -299,7 +300,7 @@ def calculate_lead_score(state: OptimizedWorkflowState) -> int:
     score = 50  # Base score
     
     lead_data = state.get("lead_data", {})
-    intel = state.get("intelligence_output", {})
+    intel = state.get("intelligence_output") or {}  # FIX: Add safety check here
     
     # Company size indicator
     if lead_data.get("company"):
@@ -311,7 +312,7 @@ def calculate_lead_score(state: OptimizedWorkflowState) -> int:
             score += 5
     
     # Budget mentioned
-    entities = intel.get("entities", {})
+    entities = intel.get("entities", {}) if intel else {}  # FIX: Extra safety
     if entities.get("budget"):
         try:
             budget = int(entities["budget"].replace("$", "").replace("k", "000"))
@@ -323,7 +324,7 @@ def calculate_lead_score(state: OptimizedWorkflowState) -> int:
                 score += 5
         except:
             pass
-    
+        
     # Urgency
     urgency = state.get("urgency")
     if urgency == UrgencyLevel.CRITICAL:

@@ -33,7 +33,7 @@
       align-items: flex-end;
       height: 120px;
       gap: 30px;
-      margin-top: 2rem;
+      margin-top: 1rem;
     }
 
     .circle {
@@ -112,7 +112,99 @@
       border-radius: 10px;
       font-size: 0.85rem;
       border: 1px solid rgba(255,255,255,0.1);
-      max-width: 250px;
+      max-width: 280px;
+    }
+
+    /* Conversation Display Styles */
+    .conversation-container {
+      max-width: 900px;
+      margin: 1.5rem auto;
+      padding: 0 20px;
+      max-height: 320px;
+      overflow-y: auto;
+      background: rgba(17, 24, 39, 0.6);
+      border-radius: 15px;
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+    }
+
+    .conversation-messages {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .message {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .message.user {
+      flex-direction: row-reverse;
+    }
+
+    .message-bubble {
+      max-width: 65%;
+      padding: 12px 18px;
+      border-radius: 18px;
+      position: relative;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+    }
+
+    .message.user .message-bubble {
+      background: linear-gradient(135deg, #00f5c9, #00d4aa);
+      color: #0f0c29;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.ai .message-bubble {
+      background: rgba(255, 255, 255, 0.08);
+      color: #e0e0e0;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-bottom-left-radius: 4px;
+    }
+
+    .message-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+      opacity: 0.8;
+    }
+
+    .message.user .message-label {
+      color: #0f0c29;
+    }
+
+    .message.ai .message-label {
+      color: #9c42f5;
+    }
+
+    .conversation-container::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .conversation-container::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.05);
+      border-radius: 4px;
+    }
+
+    .conversation-container::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.2);
+      border-radius: 4px;
+    }
+
+    .conversation-container::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.3);
+    }
+
+    .placeholder-text {
+      text-align: center;
+      color: rgba(255,255,255,0.3);
+      font-size: 0.9rem;
+      padding: 40px 20px;
     }
 
     @media (max-width: 600px) {
@@ -127,16 +219,19 @@
         font-size: 0.75rem;
         padding: 10px;
       }
+      .message-bubble {
+        max-width: 80%;
+      }
     }
   </style>
 </head>
 <body>
 
   <div class="status-bar">
-    <div class="text-lg font-bold">👤 <span id="username">guest</span></div>
+    <div class="text-lg font-bold">👤 <span id="username"></span></div>
   </div>
 
-  <div class="flex flex-col items-center justify-center min-h-[80vh] space-y-8">
+  <div class="flex flex-col items-center justify-center min-h-[80vh] space-y-6">
     <h1>🎧 Real-Time Voice Chat</h1>
 
     <div class="flex gap-2 items-center">
@@ -153,6 +248,15 @@
       <button id="mute" class="btn mute-btn" disabled>
         <i data-lucide="mic-off" class="w-5 h-5"></i> Mute
       </button>
+    </div>
+
+    <!-- Conversation Display Section -->
+    <div class="conversation-container">
+      <div class="conversation-messages" id="conversationMessages">
+        <div class="placeholder-text">
+          Click "Start" and begin speaking to see the conversation...
+        </div>
+      </div>
     </div>
 
     <div id="circle-container" class="circle-container">
@@ -173,40 +277,43 @@
   </div>
 
   <script>
+    // Wait for lucide to load before initializing icons
     if (typeof lucide !== 'undefined') {
       lucide.createIcons();
-    }    
+    }
     const userId = "{{ user_id }}";
     const username = "{{username}}";
-    document.getElementById("username").textContent = username;
-  
-    let socket, audioContext, micStream, audioWorkletNode, micVAD, pingInterval;
-    let isMuted = false;
-    let speechActive = false;
-    let isProcessing = false;
-    let audioBuffer = [];
-    let packetsSent = 0;
-    let vadConfidenceThreshold = 0.85;
-    let silenceTimer = null;
-    let silenceWindow = 4000;
-  
-    // Button references
+    // Set username in UI
+    document.getElementById("username").textContent = userId;
     const startBtn = document.getElementById("start");
     const stopBtn = document.getElementById("stop");
     const muteBtn = document.getElementById("mute");
+    const statusEl = document.getElementById("status");
+    const silenceWindow = 4000;
 
-    // Centralized button state management
-    function setButtonStates(config) {
-      startBtn.disabled = config.startDisabled;
-      stopBtn.disabled = config.stopDisabled;
-      muteBtn.disabled = config.muteDisabled;
+    let socket = null;
+    let micStream = null;
+    let audioContext = null;
+    let audioWorkletNode = null;
+    let micVAD = null;
+    let audioBuffer = [];
+    let speechActive = false;
+    let isMuted = false;
+    let silenceTimer = null;
+    let packetsSent = 0;
+    let isProcessing = false;
+    let pingInterval = null;
+
+    function updateStatus(text, colorClass) {
+      statusEl.textContent = text;
+      statusEl.className = colorClass;
+      document.getElementById('debug-status').textContent = text;
     }
 
-    function updateStatus(text, color = 'text-green-400') {
-      const statusEl = document.getElementById('status');
-      statusEl.textContent = text;
-      statusEl.className = color;
-      document.getElementById('debug-status').textContent = text;
+    function setButtonStates({ startDisabled, stopDisabled, muteDisabled }) {
+      startBtn.disabled = startDisabled;
+      stopBtn.disabled = stopDisabled;
+      muteBtn.disabled = muteDisabled;
     }
 
     function updateDebugInfo() {
@@ -216,7 +323,44 @@
       document.getElementById('debug-vad').textContent = speechActive ? 'Active' : 'Inactive';
       document.getElementById('debug-timer').textContent = silenceTimer ? 'Running' : '-';
     }
-  
+
+    // Conversation Display Functions
+    function addMessage(text, isUser) {
+      const container = document.getElementById("conversationMessages");
+      const placeholder = container.querySelector('.placeholder-text');
+      if (placeholder) placeholder.remove();
+
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${isUser ? 'user' : 'ai'}`;
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'message-bubble';
+      
+      const label = document.createElement('div');
+      label.className = 'message-label';
+      label.textContent = isUser ? 'You' : 'AI Assistant';
+      
+      const textContent = document.createElement('div');
+      textContent.textContent = text;
+      
+      bubble.appendChild(label);
+      bubble.appendChild(textContent);
+      messageDiv.appendChild(bubble);
+      container.appendChild(messageDiv);
+      
+      // Auto-scroll to bottom
+      const conversationContainer = container.parentElement;
+      conversationContainer.scrollTop = conversationContainer.scrollHeight;
+    }
+
+    function addUserMessage(text) {
+      addMessage(text, true);
+    }
+
+    function addAIMessage(text) {
+      addMessage(text, false);
+    }
+
     function startPing() {
       if (pingInterval) clearInterval(pingInterval);
       pingInterval = setInterval(() => {
@@ -225,20 +369,20 @@
         }
       }, 20000);
     }
-  
+
     function stopPing() {
       if (pingInterval) {
         clearInterval(pingInterval);
         pingInterval = null;
       }
     }
-  
+
     function openWebSocket() {
       if (socket && socket.readyState !== WebSocket.CLOSED) return;
       
       socket = new WebSocket("ws://localhost:8080/voice_chat");
       socket.binaryType = "arraybuffer";
-  
+
       socket.onopen = () => {
         updateStatus("Connected", "text-blue-400");
       };
@@ -257,16 +401,61 @@
       
       socket.onmessage = (event) => {
         try {
-          const audioBlob = new Blob([event.data], { type: "audio/wav" });
-          const audioURL = URL.createObjectURL(audioBlob);
-          const audio = new Audio(audioURL);
-          audio.play().catch(e => console.error("Audio playback error:", e));
+          // Check if it's binary audio or JSON text
+          if (event.data instanceof ArrayBuffer) {
+            // Binary audio data
+            const audioBlob = new Blob([event.data], { type: "audio/wav" });
+            const audioURL = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioURL);
+            audio.play().catch(e => console.error("Audio playback error:", e));
+          } else {
+            // Text/JSON message
+            const data = JSON.parse(event.data);
+            handleTextMessage(data);
+          }
         } catch (e) {
           console.error("Message processing error:", e);
         }
       };
     }
-  
+
+    function handleTextMessage(data) {
+      console.log('Received message:', data.type, data);
+      
+      switch(data.type) {
+        case 'transcription':
+          // User's speech transcription
+          addUserMessage(data.text);
+          break;
+          
+        case 'ai_response':
+          // AI text-only response
+          addAIMessage(data.text);
+          break;
+          
+        case 'ai_response_with_audio':
+          // AI response with audio
+          addAIMessage(data.text);
+          
+          // Play the audio
+          try {
+            const audio = new Audio(`data:audio/${data.audio_format};base64,${data.audio_data}`);
+            audio.play().catch(e => console.error('Audio playback error:', e));
+          } catch (e) {
+            console.error('Failed to play audio:', e);
+          }
+          break;
+          
+        case 'status':
+          console.log('Status:', data.message);
+          break;
+          
+        case 'error':
+          console.error('Error:', data.message);
+          break;
+      }
+    }
+
     async function waitForSocketConnection() {
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -317,14 +506,12 @@
       }
     }
 
-    // Define the AudioWorklet processor inline
     const processorCode = `
       class AudioCaptureProcessor extends AudioWorkletProcessor {
         process(inputs, outputs, parameters) {
           const input = inputs[0];
           if (input.length > 0) {
             const channelData = input[0];
-            // Send audio data to main thread
             this.port.postMessage(channelData);
           }
           return true;
@@ -332,14 +519,13 @@
       }
       registerProcessor('audio-capture-processor', AudioCaptureProcessor);
     `;
-  
+
     async function startAudioStream() {
       if (isProcessing) {
         console.log('⚠️ Already processing, ignoring duplicate start');
         return;
       }
       
-      // Prevent double-initialization
       if (audioContext || micStream) {
         console.log('⚠️ Audio already initialized, stopping first');
         await stopAudioStream();
@@ -347,8 +533,6 @@
       }
       
       isProcessing = true;
-      
-      // Disable Start button IMMEDIATELY
       setButtonStates({ startDisabled: true, stopDisabled: true, muteDisabled: true });
       
       try {
@@ -368,28 +552,20 @@
             noiseSuppression: true,
             autoGainControl: true,
             sampleRate: 48000,
-            channelCount: 1,
-            latency: 0.01
+            channelCount: 1
           } 
         });
         
-        audioContext = new AudioContext({ 
-          sampleRate: 48000,
-          latency: "interactive"
-        });
+        audioContext = new AudioContext({ sampleRate: 48000 });
         
-        console.log('Audio context created at', audioContext.sampleRate, 'Hz');
-
-        // Create AudioWorklet processor
         const blob = new Blob([processorCode], { type: 'application/javascript' });
         const processorUrl = URL.createObjectURL(blob);
-        
         await audioContext.audioWorklet.addModule(processorUrl);
         URL.revokeObjectURL(processorUrl);
         
+        const source = audioContext.createMediaStreamSource(micStream);
         audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-capture-processor');
         
-        // Handle audio data from the worklet
         audioWorkletNode.port.onmessage = (event) => {
           if (!isMuted && speechActive) {
             const float32Array = new Float32Array(event.data);
@@ -398,31 +574,22 @@
           }
         };
         
-        const micSource = audioContext.createMediaStreamSource(micStream);
-        micSource.connect(audioWorkletNode);
+        source.connect(audioWorkletNode);
         audioWorkletNode.connect(audioContext.destination);
-        
-        console.log('AudioWorklet pipeline connected (48kHz, low-latency)');
 
         micVAD = await vad.MicVAD.new({
           model: "v5",
           onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/",
           baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.27/dist/",
           stream: micStream,
-          positiveSpeechThreshold: vadConfidenceThreshold,
-          negativeSpeechThreshold: 0.70,
-          redemptionMs: 1400,
-          preSpeechPadMs: 800,
-          minSpeechMs: 400,
+          positiveSpeechThreshold: 0.6,
+          negativeSpeechThreshold: 0.4,
+          redemptionFrames: 8,
+          preSpeechPadFrames: 1,
+          minSpeechFrames: 3,
           
           onSpeechStart: () => {
             if (!isMuted) {
-              if (silenceTimer) {
-                clearTimeout(silenceTimer);
-                silenceTimer = null;
-                console.log("Speech resumed - cancelled silence timer");
-              }
-              
               if (!speechActive) {
                 speechActive = true;
                 audioBuffer = [];
@@ -448,7 +615,6 @@
                 console.log("4 seconds of silence - sending buffered audio");
                 
                 speechActive = false;
-                
                 sendAudioData();
                 
                 document.querySelectorAll('.circle').forEach(c => c.classList.remove('animate'));
@@ -469,24 +635,21 @@
         startPing();
         updateStatus("Ready - Speak now", "text-blue-400");
         
-        // Enable Stop and Mute buttons after successful start
         setButtonStates({ startDisabled: true, stopDisabled: false, muteDisabled: false });
       } catch (error) {
         console.error("Error starting audio stream:", error);
         updateStatus("Error: " + error.message, "text-red-400");
         await stopAudioStream();
-        // Re-enable Start button on error
         setButtonStates({ startDisabled: false, stopDisabled: true, muteDisabled: true });
       } finally {
         isProcessing = false;
       }
     }
-  
+
     async function stopAudioStream() {
       if (isProcessing) return;
       isProcessing = true;
       
-      // Disable all buttons during cleanup
       setButtonStates({ startDisabled: true, stopDisabled: true, muteDisabled: true });
       
       try {
@@ -536,15 +699,17 @@
         packetsSent = 0;
         document.querySelectorAll('.circle').forEach(c => c.classList.remove('animate'));
         
-        // Reset mute button text
         muteBtn.innerHTML = `<i data-lucide="mic-off" class="w-5 h-5"></i> Mute`;
-        lucide.createIcons();
+        
+        // Recreate icons if lucide is available
+        if (typeof lucide !== 'undefined') {
+          lucide.createIcons();
+        }
         
         updateStatus("Disconnected", "text-red-400");
         updateDebugInfo();
         stopPing();
         
-        // Re-enable Start button after complete cleanup
         setButtonStates({ startDisabled: false, stopDisabled: true, muteDisabled: true });
       } catch (error) {
         console.error("Error stopping audio stream:", error);
@@ -553,16 +718,20 @@
         isProcessing = false;
       }
     }
-  
+
     startBtn.addEventListener("click", startAudioStream);
     stopBtn.addEventListener("click", stopAudioStream);
-  
+
     muteBtn.addEventListener("click", async () => {
       isMuted = !isMuted;
       muteBtn.innerHTML = isMuted
         ? `<i data-lucide="mic" class="w-5 h-5"></i> Unmute`
         : `<i data-lucide="mic-off" class="w-5 h-5"></i> Mute`;
-      lucide.createIcons();
+      
+      // Recreate icons if lucide is available
+      if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+      }
 
       if (isMuted) {
         if (silenceTimer) {
@@ -577,23 +746,13 @@
         document.querySelectorAll('.circle').forEach(c => c.classList.remove('animate'));
       }
       
-      updateStatus(isMuted ? "Muted" : "Connected", isMuted ? "text-yellow-400" : "text-blue-400");
-
-      if (micVAD) {
-        if (isMuted) {
-          await micVAD.pause();
-        } else {
-          await micVAD.start();
-        }
-      }
-      
+      updateStatus(isMuted ? "Muted" : "Connected", isMuted ? "text-gray-400" : "text-blue-400");
       updateDebugInfo();
     });
-    
-    window.addEventListener("beforeunload", () => {
-      stopAudioStream();
+
+    window.addEventListener('beforeunload', async () => {
+      await stopAudioStream();
     });
   </script>
-  
 </body>
 </html>

@@ -52,6 +52,7 @@ class Settings:
         self.SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
 
         self.ENABLE_TTS = os.getenv('ENABLE_TTS', 'false').lower() == 'true'
+        self.AUDIO_OUTPUT_DIR = os.getenv('AUDIO_OUTPUT_DIR', 'audio_data')
 
 # Create singleton instance
 settings = Settings()

@@ -185,39 +185,48 @@ async def require_auth(request: Request):
 async def root(request: Request):
     """
     Root redirect logic:
-    - If user is authenticated → go to /home (dashboard)
-    - If user is NOT authenticated AND TTS enabled → go to /voice (public demo)
-    - Otherwise → show login page
+    - Redirects to /voice if TTS is enabled
+    - Redirects to /home if TTS is disabled
     """
-    token = ''#request.cookies.get("access_token")
+    token = request.cookies.get("access_token")
+    if not token:
+        return RedirectResponse(url="/login", status_code=303)
     
-    # Check if user is authenticated
-    if token:
-        try:
-            verify_jwt_token(token)
-            # Authenticated user → send to dashboard
+    try:
+        verify_jwt_token(token)
+    except HTTPException:
+        print("❌ Invalid token, redirecting to login")
+        return RedirectResponse(url="/login", status_code=303)
+        
+    try:
+        if Settings.ENABLE_TTS in [False, "False", "false"]:
+            print("⚠️  TTS is disabled, redirecting to home")
             return RedirectResponse(url="/home", status_code=303)
-        except HTTPException:
-            # Invalid token, continue to login
-            pass
-    
-    # Not authenticated - check if we should show public voice chat demo
-    if Settings.ENABLE_TTS in [False, "False", "false", None]:
-        # TTS enabled → show public voice chat demo
-        return RedirectResponse(url="/voice", status_code=303)
-    
-    # Default: show login page
-    return templates.TemplateResponse("login.html", {"request": request})
+        else:
+            print("✅ TTS is enabled, redirecting to voice chat")
+            return RedirectResponse(url="/voice", status_code=303)
+    except Exception as e:
+        print(f"❌ Error checking TTS setting: {e}")
+        return RedirectResponse(url="/login", status_code=303)
 
 
-@app.get("/voice")
-async def serve_voice_chat(request: Request):
-    """Serve the voice chat interface - PUBLIC ACCESS"""
+@app.get("/voice", response_class=HTMLResponse)
+async def home_page(
+    request: Request,
+    user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    if isinstance(user, RedirectResponse):
+        return user
+
+    user_obj = await DBManager(session=db).get_user_by_username(username=user)
+    if not user_obj:
+        return HTMLResponse("User not found", status_code=404)
+
     return templates.TemplateResponse(
-        "voice_chat.html",
-        {"request": request}
+        "voice.html",
+        {"request": request, "user_id": user_obj.id, "username": user_obj.username},
     )
-
 
 @app.get("/home", response_class=HTMLResponse)
 async def home_page(
@@ -671,7 +680,7 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
                 break
             except Exception as e:
                 print(f"Error processing message: {e}")
-                continue
+                break
     
     except Exception as e:
         print(f"Unexpected error in voice_chat: {e}")

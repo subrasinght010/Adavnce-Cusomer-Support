@@ -7,7 +7,7 @@ import soundfile as sf
 import numpy as np
 from collections import deque
 from scipy import signal
-
+from config.settings import settings as config
 from state.optimized_workflow_state import OptimizedWorkflowState
 from tools.stt import transcribe_with_faster_whisper
 
@@ -322,7 +322,7 @@ async def process_audio(
 
         # Save WAV (optional)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"/Users/subrat/Desktop/Agent/audio_data/audio_{timestamp}.wav"
+        filename = f"{config.AUDIO_OUTPUT_DIR}/audio_{timestamp}.wav"
         save_float32_to_wav(final_audio, filename=filename, sample_rate=OUTPUT_SAMPLE_RATE)
 
         # Transcribe (STT)
