@@ -7,7 +7,7 @@ These handle Twilio voice calls (both incoming and outgoing)
 
 from datetime import datetime
 from services.phone_service import phone_service
-from graph_workflows.optimized_workflow import workflow_runner
+from graph_workflows.workflow import workflow_runner
 from fastapi.responses import Response as FastAPIResponse
 from fastapi import Request, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +23,7 @@ import logging
 from database.crud import DBManager
 from database.db import get_db
 from services.phone_service import phone_service
-from graph_workflows.optimized_workflow import workflow_runner
+from graph_workflows.workflow import workflow_runner
 
 logger = logging.getLogger(__name__)
 

@@ -27,7 +27,7 @@ from database.models import FollowUp
 from services.phone_service import PhoneService
 
 # CRITICAL: Import the FULL workflow
-from graph_workflows.optimized_workflow import workflow_runner
+from graph_workflows.workflow import workflow_runner
 
 logger = logging.getLogger(__name__)
 
