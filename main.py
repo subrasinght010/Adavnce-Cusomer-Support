@@ -742,3 +742,137 @@ async def voice_chat(websocket: WebSocket, db: AsyncSession = Depends(get_db)):
 # -------------------------
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
+
+
+
+
+#     # main.py
+# """
+# Main FastAPI Application - Refactored for LangGraph + LangChain
+# """
+
+# import asyncio
+# import logging
+# from contextlib import asynccontextmanager
+# from fastapi import FastAPI
+# from fastapi.middleware.cors import CORSMiddleware
+
+# # Import routes
+# from routes.api import router as api_router
+# from routes.webhooks import router as webhook_router
+# from routes.auth import router as auth_router  # Your existing auth
+# from routes.frontend import router as frontend_router  # Your existing frontend
+
+# # Import agents
+# from langchain_agents.lead_manager_agent import lead_manager_agent
+
+# # Setup logging
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# )
+# logger = logging.getLogger(__name__)
+
+
+# # ============================================================================
+# # LIFESPAN - START/STOP BACKGROUND AGENTS
+# # ============================================================================
+
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     """Startup and shutdown events"""
+    
+#     # STARTUP
+#     logger.info("🚀 Starting Multi-Agent System...")
+    
+#     # Start Lead Manager (continuous background operation)
+#     lead_manager_task = asyncio.create_task(
+#         lead_manager_agent.start_continuous_operation()
+#     )
+    
+#     logger.info("✅ Lead Manager started (runs every 15 min)")
+#     logger.info("✅ Application ready")
+    
+#     yield
+    
+#     # SHUTDOWN
+#     logger.info("🛑 Shutting down...")
+#     await lead_manager_agent.stop()
+#     lead_manager_task.cancel()
+#     logger.info("✅ Shutdown complete")
+
+
+# # ============================================================================
+# # APP INITIALIZATION
+# # ============================================================================
+
+# app = FastAPI(
+#     title="Multi-Agent AI System",
+#     description="Autonomous Sales & Support System with LangGraph + LangChain",
+#     version="2.0.0",
+#     lifespan=lifespan
+# )
+
+# # CORS
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+
+# # ============================================================================
+# # INCLUDE ROUTERS
+# # ============================================================================
+
+# # API routes
+# app.include_router(api_router, prefix="/api", tags=["API"])
+
+# # Webhook routes
+# app.include_router(webhook_router, prefix="/webhook", tags=["Webhooks"])
+
+# # Auth routes (your existing)
+# app.include_router(auth_router, prefix="/auth", tags=["Auth"])
+
+# # Frontend routes (your existing)
+# app.include_router(frontend_router, tags=["Frontend"])
+
+
+# # ============================================================================
+# # ROOT ENDPOINT
+# # ============================================================================
+
+# @app.get("/")
+# async def root():
+#     return {
+#         "status": "running",
+#         "version": "2.0.0",
+#         "architecture": "LangGraph + LangChain",
+#         "agents": {
+#             "inbound_intelligence": "active",
+#             "outbound_intelligence": "active",
+#             "lead_manager": "active",
+#             "communication": "active"
+#         }
+#     }
+
+
+# @app.get("/health")
+# async def health():
+#     return {"status": "healthy"}
+
+
+# # ============================================================================
+# # RUN
+# # ============================================================================
+
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(
+#         "main:app",
+#         host="0.0.0.0",
+#         port=8080,
+#         reload=True
+#     )
