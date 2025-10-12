@@ -67,7 +67,7 @@ class OptimizedIncomingListener(BaseNode):
                     state["errors"].append({
                         "node": self.name,
                         "error": "Voice transcription failed",
-                        "timestamp": datetime.utcnow().isoformat()
+                        "timestamp": datetime.now().isoformat()
                     })
                     return state
             
@@ -76,7 +76,7 @@ class OptimizedIncomingListener(BaseNode):
                 state["errors"].append({
                     "node": self.name,
                     "error": f"STT failed: {str(e)}",
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now().isoformat()
                 })
                 return state
         

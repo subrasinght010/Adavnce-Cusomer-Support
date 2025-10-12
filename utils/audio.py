@@ -10,7 +10,9 @@ from scipy import signal
 from config.settings import settings as config
 from state.optimized_workflow_state import OptimizedWorkflowState
 from tools.stt import transcribe_with_faster_whisper
-
+# Import nodes
+from nodes.optimized_incoming_listener import incoming_listener_node
+from nodes.unified_intelligence_agent import unified_intelligence_agent
 # ==================== CONFIGURATION ====================
 INPUT_SAMPLE_RATE = 48000
 OUTPUT_SAMPLE_RATE = 16000
@@ -184,114 +186,6 @@ async def preprocess_audio(audio_bytes: bytes) -> bytes:
         return audio_bytes
 
 # ==================== MAIN PROCESSING ====================
-
-# async def process_audio(
-#     audio_bytes: bytes,
-#     websocket: WebSocket,
-#     validator: AudioValidator,
-#     safe_send: Callable = None
-# ):
-#     """
-#     Process audio: quality check → STT → route to incoming_listener_node
-#     """
-#     try:
-#         # === YOUR EXISTING CODE (NO CHANGES) ===
-#         # Resample if needed
-#         if NEEDS_RESAMPLING:
-#             processed_bytes = await resample_audio(audio_bytes, INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE)
-#         else:
-#             processed_bytes = audio_bytes
-
-#         # Analyze quality
-#         quality = await analyze_audio_quality(processed_bytes, OUTPUT_SAMPLE_RATE)
-#         if not quality.get('is_technically_valid', True):
-#             print("⚠️ Quality check failed")
-#             return
-
-#         # Preprocess
-#         final_audio = await preprocess_audio(processed_bytes)
-
-#         # Save WAV (optional)
-#         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-#         filename = f"/Users/subrat/Desktop/Multi-Agent-System/audio_data/audio_{timestamp}.wav"
-#         save_float32_to_wav(final_audio, filename=filename, sample_rate=OUTPUT_SAMPLE_RATE)
-
-#         # Transcribe (STT)
-#         transcription = await transcribe_with_faster_whisper(final_audio)
-        
-#         if not transcription or not transcription.strip():
-#             print("ℹ️ No speech detected")
-#             return
-        
-#         print(f"📝 Transcription: {transcription}")
-        
-#         # Send transcription to client
-#         if safe_send:
-#             stats = validator.get_stats()
-#             await safe_send(websocket, {
-#                 "type": "transcription",
-#                 "text": transcription,
-#                 "timestamp": datetime.now().isoformat(),
-#                 "audio_quality": {
-#                     'duration': quality.get('duration'),
-#                     'rms_energy': quality.get('rms_energy')
-#                 },
-#                 "stats": stats
-#             })
-        
-#         # === NEW CODE: Route to incoming_listener_node ===
-        
-#         # Get lead_id from websocket
-#         lead_id = getattr(websocket, 'lead_id', 'unknown')
-        
-#         # Import the node instance
-#         from nodes.optimized_incoming_listener import incoming_listener_node
-        
-#         # Create state with ALL required fields
-#         state = {
-#             "lead_id": lead_id,
-#             "conversation_thread": [],
-#             "pending_action": None,
-#             "current_message": transcription,  # Set the transcription here
-#             "voice_file_url": None,
-#             "channel": "web_call",
-#             "lead_data": {},
-#             "intelligence_output": None,
-#             "completed_actions": [],
-#             "errors": [],
-#             "is_simple_message": False,
-#             "cache_hit": False,
-#             "cache_key": None,
-#             "cache_saves_made": 0,
-#             "audio_bytes": final_audio,
-#             "websocket": websocket
-#         }
-        
-#         # IMPORTANT: Call execute() directly, not __call__
-#         # Since we're already in an async context
-#         print(f"🔄 Routing to incoming_listener_node...")
-#         result = await incoming_listener_node.execute(state)  # Changed this line!
-        
-#         # The result should be the updated state
-#         print(f"✅ Audio processing complete. Intent: {result.get('intelligence_output', {}).get('intent', 'unknown')}")
-        
-#         # Send AI response back to client if available
-#         if safe_send and result.get('intelligence_output'):
-#             intelligence = result['intelligence_output']
-#             await safe_send(websocket, {
-#                 "type": "ai_response",
-#                 "text": intelligence.get('response_text', ''),
-#                 "intent": intelligence.get('intent'),
-#                 "timestamp": datetime.now().isoformat()
-#             })
-            
-#     except Exception as e:
-#         print(f"❌ Audio processing failed: {e}")
-#         import traceback
-#         traceback.print_exc()
-
-# In utils/audio.py
-
 async def process_audio(
     audio_bytes: bytes,
     websocket: WebSocket,
@@ -355,10 +249,6 @@ async def process_audio(
         
         # Get lead_id from websocket
         lead_id = getattr(websocket, 'lead_id', 'unknown')
-        
-        # Import nodes
-        from nodes.optimized_incoming_listener import incoming_listener_node
-        from nodes.unified_intelligence_agent import unified_intelligence_agent
         
         # Create initial state
         state = {
@@ -582,42 +472,6 @@ async def handle_text_message(
         return False
 
     return False
-
-# async def handle_audio_chunk(
-#     chunk: bytes,
-#     audio_data_ref: dict,
-#     is_receiving_ref: dict,
-#     last_chunk_time_ref: dict,
-#     websocket: WebSocket,
-#     validator: AudioValidator,
-#     safe_send: Callable
-# ):
-#     """Handle incoming audio binary data"""
-    
-#     if not validator.validate_chunk(chunk):
-#         return
-    
-#     is_receiving_ref['value'] = True
-#     last_chunk_time_ref['value'] = datetime.now()
-#     audio_data_ref['value'] += chunk
-    
-#     # Calculate duration at INPUT rate
-#     duration = len(audio_data_ref['value']) / (INPUT_SAMPLE_RATE * BYTES_PER_SAMPLE)
-    
-#     if duration > MAX_AUDIO_DURATION:
-#         print(f"Max duration reached ({duration:.1f}s) - processing")
-#         await process_audio(audio_data_ref['value'], websocket, validator, safe_send)
-#         audio_data_ref['value'] = b''
-#         is_receiving_ref['value'] = False
-    
-#     # Log progress every second
-#     if len(audio_data_ref['value']) % (INPUT_SAMPLE_RATE * BYTES_PER_SAMPLE) < len(chunk):
-#         stats = validator.get_stats()
-#         print(f"Buffer: {duration:.2f}s | Chunks: {stats.get('total_received', 0)} | "
-#               f"Valid: {stats.get('validation_rate', 0)*100:.1f}%")
-        
-
-# In utils/audio.py
 
 async def handle_audio_chunk(
     chunk: bytes,
