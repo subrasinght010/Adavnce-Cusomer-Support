@@ -1,111 +1,82 @@
 # nodes/background_agents.py
 """
-Background Agents - FULLY INTEGRATED
-Connects to: database/crud.py, database/models.py, database/db.py
+Background Agents - UPDATED for Inbound/Outbound
 """
 
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict
 
-# Base class
 from nodes.core.base_node import BaseNode
-
-# State
-from state.optimized_workflow_state import OptimizedWorkflowState
-
-# YOUR EXISTING CODE - Database
+from state.optimized_workflow_state import OptimizedWorkflowState, DirectionType
 from database.crud import DBManager
 from database.db import get_db
-from database.models import *
-# YOUR EXISTING CODE - Utils
-from utils.message_queue import MessageQueue
-
-# YOUR EXISTING CODE - Config
-from config.settings import settings
-
-# YOUR EXISTING CODE - Workers (if needed)
-from workers.followup_worker import FollowUpWorker
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# 1. DATABASE AGENT (INTEGRATED)
+# 1. DATABASE AGENT (UPDATED)
 # ============================================================================
 
 class DatabaseAgent(BaseNode):
-    """
-    Save everything to database using YOUR existing DB code
-    Runs ASYNC - doesn't block user response
-    """
+    """Save to database - handles both inbound and outbound"""
     
     def __init__(self):
         super().__init__("database_agent")
     
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
-        """
-        Save conversation, lead data, and metrics to database
-        """
+        """Save conversation and lead updates"""
         
         self.logger.info("Saving to database...")
         
         try:
-            # Run all database operations in parallel
             save_tasks = [
                 self._save_conversation(state),
-                self._save_lead_update(state),
-                self._save_metrics(state)
+                self._save_lead_update(state)
             ]
             
             results = await asyncio.gather(*save_tasks, return_exceptions=True)
             
-            # Check for errors
             errors = [r for r in results if isinstance(r, Exception)]
             
             if errors:
-                self.logger.error(f"Database save errors: {errors}")
+                self.logger.error(f"DB save errors: {errors}")
                 state["db_save_status"] = "partial_failure"
             else:
                 state["db_save_status"] = "success"
                 state["completed_actions"].append("database_save")
-                self.logger.info("✓ All data saved to database")
+                self.logger.info("✓ Data saved")
             
             state["db_save_timestamp"] = datetime.utcnow().isoformat()
         
         except Exception as e:
-            self.logger.error(f"Database save failed: {e}")
+            self.logger.error(f"DB save failed: {e}")
             state["db_save_status"] = "failed"
         
         return state
     
     async def _save_conversation(self, state: OptimizedWorkflowState) -> bool:
-        """
-        Save conversation using YOUR existing database code
-        """
+        """Save conversation record"""
         try:
             async with get_db() as db:
                 db_manager = DBManager(db)
                 
-                # Create conversation record using YOUR models
-                conversation_data = {
-                    "session_id": state.get("session_id"),
+                conversation = {
                     "lead_id": state.get("lead_id"),
-                    "timestamp": state.get("timestamp"),
+                    "session_id": state.get("session_id"),
+                    "direction": state.get("direction"),  # NEW: inbound/outbound
                     "channel": str(state.get("channel")),
-                    "user_message": state.get("current_message"),
-                    "bot_response": state.get("intelligence_output", {}).get("response_text"),
+                    "message": state.get("current_message"),
+                    "response": state.get("intelligence_output", {}).get("response_text"),
                     "intent": str(state.get("detected_intent")),
                     "sentiment": str(state.get("sentiment")),
-                    "conversation_history": state.get("conversation_history", [])
+                    "timestamp": datetime.utcnow().isoformat()
                 }
                 
-                # Use YOUR existing CRUD method
-                await db_manager.create_conversation(conversation_data)
-                # OR: await db_manager.save_conversation(conversation_data)
-                
-                self.logger.debug(f"Conversation saved: {state.get('session_id')}")
+                await db_manager.save_conversation(conversation)
+                self.logger.debug("Conversation saved")
                 return True
         
         except Exception as e:
@@ -113,93 +84,57 @@ class DatabaseAgent(BaseNode):
             return False
     
     async def _save_lead_update(self, state: OptimizedWorkflowState) -> bool:
-        """
-        Update lead record using YOUR existing database code
-        """
+        """Save lead updates - different fields for inbound vs outbound"""
         try:
             async with get_db() as db:
                 db_manager = DBManager(db)
                 
-                # Create/update lead using YOUR models
+                direction = state.get("direction")
+                
+                # Common fields
                 lead_update = {
-                    "lead_id": state.get("lead_id"),
-                    "last_contacted_at": datetime.utcnow().isoformat(),
+                    "last_contact_date": datetime.utcnow().isoformat(),
                     "lead_score": state.get("lead_score"),
-                    "client_type": state.get("client_type"),
-                    "lead_data": state.get("lead_data", {}),
                     "last_intent": str(state.get("detected_intent")),
-                    "last_sentiment": str(state.get("sentiment")),
-                    "response_received": state.get("communication_sent", False)
+                    "last_sentiment": str(state.get("sentiment"))
                 }
                 
-                # Use YOUR existing CRUD method
-                await db_manager.update_lead(state.get("lead_id"), lead_update)
-                # OR: await db_manager.upsert_lead(lead_update)
+                # Outbound-specific fields
+                if direction == DirectionType.OUTBOUND:
+                    lead_update.update({
+                        "status": str(state.get("lead_stage")),  # NEW
+                        "attempt_count": state.get("attempt_count", 0),  # NEW
+                        "last_call_type": str(state.get("call_type")),  # NEW
+                        "last_attempt_timestamp": datetime.utcnow().isoformat()  # NEW
+                    })
                 
+                # Inbound-specific
+                else:
+                    lead_update.update({
+                        "response_received": state.get("communication_sent", False)
+                    })
+                
+                await db_manager.update_lead(state.get("lead_id"), lead_update)
                 self.logger.debug(f"Lead updated: {state.get('lead_id')}")
                 return True
         
         except Exception as e:
             self.logger.error(f"Failed to update lead: {e}")
             return False
-    
-    async def _save_metrics(self, state: OptimizedWorkflowState) -> bool:
-        """
-        Save performance metrics
-        """
-        try:
-            async with get_db() as db:
-                db_manager = DBManager(db)
-                
-                metrics_record = {
-                    "session_id": state.get("session_id"),
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "total_processing_time_ms": state.get("total_processing_time", 0),
-                    "llm_calls_made": state.get("llm_calls_made", 0),
-                    "cache_hit": state.get("cache_hit", False),
-                    "node_execution_times": state.get("node_execution_times", {}),
-                    "errors_count": len(state.get("errors", []))
-                }
-                
-                # Use YOUR existing CRUD method
-                # await db_manager.save_metrics(metrics_record)
-                
-                self.logger.debug("Metrics saved")
-                return True
-        
-        except Exception as e:
-            self.logger.error(f"Failed to save metrics: {e}")
-            return False
 
 
 # ============================================================================
-# 2. FOLLOW-UP AGENT (INTEGRATED)
+# 2. FOLLOW-UP AGENT
 # ============================================================================
 
 class FollowUpAgent(BaseNode):
-    """
-    Schedule future follow-up actions
-    Runs ASYNC - doesn't block user response
-    Integrates with YOUR existing workers
-    """
+    """Schedule follow-up actions"""
     
     def __init__(self):
         super().__init__("followup_agent")
-        
-        # Initialize message queue for follow-ups (YOUR existing code)
-        self.message_queue = MessageQueue()
-        
-        # Initialize followup worker (YOUR existing code)
-        try:
-            self.followup_worker = FollowUpWorker()
-        except:
-            self.followup_worker = None
-            self.logger.warning("Followup worker not available")
     
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
-        """
-        Schedule follow-up actions based on conversation
-        """
+        """Schedule follow-ups based on conversation"""
         
         self.logger.info("Scheduling follow-ups...")
         
@@ -209,138 +144,74 @@ class FollowUpAgent(BaseNode):
             self.logger.info("No follow-ups needed")
             return state
         
-        # Schedule all follow-ups
-        scheduled = []
-        for follow_up in follow_ups:
-            try:
-                scheduled_time = await self._schedule_follow_up(follow_up, state)
-                scheduled.append({
-                    **follow_up,
-                    "scheduled_at": scheduled_time
-                })
-                self.logger.info(f"✓ Follow-up scheduled: {follow_up['action']} at {scheduled_time}")
-            except Exception as e:
-                self.logger.error(f"Failed to schedule follow-up: {e}")
-        
-        state["follow_up_scheduled"] = len(scheduled) > 0
-        state["follow_up_actions"] = scheduled
-        
-        if scheduled:
+        try:
+            for followup in follow_ups:
+                await self._schedule_followup(followup)
+            
+            state["follow_up_scheduled"] = True
+            state["follow_up_actions"] = follow_ups
             state["completed_actions"].append("schedule_followups")
+            
+            self.logger.info(f"✓ {len(follow_ups)} follow-ups scheduled")
+        
+        except Exception as e:
+            self.logger.error(f"Follow-up scheduling failed: {e}")
+            state["follow_up_scheduled"] = False
         
         return state
     
-    async def _determine_follow_ups(self, state: OptimizedWorkflowState) -> List[Dict]:
-        """
-        Determine what follow-ups are needed
-        """
-        follow_ups = []
+    async def _determine_follow_ups(self, state: OptimizedWorkflowState):
+        """Determine what follow-ups are needed"""
         
         intelligence = state.get("intelligence_output", {})
-        intent = state.get("detected_intent")
-        sentiment = state.get("sentiment")
-        lead_score = state.get("lead_score", 0)
+        next_actions = intelligence.get("next_actions", [])
+        direction = state.get("direction")
         
-        # High-value lead → Follow up in 24 hours
-        if lead_score >= 70:
-            follow_ups.append({
-                "action": "high_value_followup",
-                "lead_id": state.get("lead_id"),
-                "delay_hours": 24,
-                "message": "Following up on our conversation about your needs",
-                "priority": "high"
-            })
+        follow_ups = []
         
-        # Pricing query but no purchase → Follow up in 3 days
-        if "pricing" in str(intent).lower() and not state.get("callback_scheduled"):
-            follow_ups.append({
-                "action": "pricing_followup",
-                "lead_id": state.get("lead_id"),
-                "delay_hours": 72,
-                "message": "Have you had a chance to review our pricing?",
-                "priority": "medium"
-            })
+        # Inbound follow-ups
+        if direction == DirectionType.INBOUND:
+            if "send_email" in next_actions:
+                follow_ups.append({
+                    "action": "send_email",
+                    "lead_id": state.get("lead_id"),
+                    "delay_hours": 1,
+                    "priority": "medium"
+                })
         
-        # Negative sentiment → Follow up in 2 hours (urgent)
-        if sentiment in ["negative", "very_negative"]:
-            follow_ups.append({
-                "action": "satisfaction_check",
-                "lead_id": state.get("lead_id"),
-                "delay_hours": 2,
-                "message": "Checking in to ensure your concerns were addressed",
-                "escalate": True,
-                "priority": "high"
-            })
-        
-        # Callback requested → Reminder before callback
-        if state.get("callback_scheduled"):
-            follow_ups.append({
-                "action": "callback_reminder",
-                "lead_id": state.get("lead_id"),
-                "delay_hours": 1,
-                "message": "Reminder: Your callback is scheduled soon",
-                "priority": "high"
-            })
-        
-        # General inquiry → Nurture campaign
-        if "general" in str(intent).lower() and lead_score < 50:
-            follow_ups.append({
-                "action": "nurture_email",
-                "lead_id": state.get("lead_id"),
-                "delay_hours": 168,  # 1 week
-                "message": "Thought you might find this resource helpful...",
-                "priority": "low"
-            })
+        # Outbound follow-ups
+        else:
+            if not state.get("communication_sent"):
+                # Retry if failed
+                follow_ups.append({
+                    "action": "retry_contact",
+                    "lead_id": state.get("lead_id"),
+                    "delay_hours": 24,
+                    "priority": "high"
+                })
         
         return follow_ups
     
-    async def _schedule_follow_up(self, follow_up: Dict, state: OptimizedWorkflowState) -> str:
-        """
-        Schedule a follow-up using YOUR existing infrastructure
-        """
-        delay_hours = follow_up.get("delay_hours", 24)
-        scheduled_time = datetime.utcnow() + timedelta(hours=delay_hours)
-        
+    async def _schedule_followup(self, followup: Dict):
+        """Schedule a follow-up action"""
         try:
-            # Option 1: Use YOUR message queue
-            await self.message_queue.enqueue({
-                "type": "follow_up",
-                "data": follow_up,
-                "scheduled_at": scheduled_time.isoformat(),
-                "lead_id": state.get("lead_id")
-            })
+            scheduled_time = datetime.utcnow() + timedelta(hours=followup.get("delay_hours", 24))
             
-            # Option 2: Use YOUR followup worker
-            if self.followup_worker:
-                await self.followup_worker.schedule_followup(
-                    lead_id=follow_up.get("lead_id"),
-                    action=follow_up.get("action"),
-                    scheduled_time=scheduled_time,
-                    message=follow_up.get("message"),
-                    priority=follow_up.get("priority", "medium")
-                )
-            
-            # Option 3: Save to database for cron job to pick up
             async with get_db() as db:
                 db_manager = DBManager(db)
                 
-                followup_record = {
-                    "lead_id": follow_up.get("lead_id"),
-                    "action": follow_up.get("action"),
+                record = {
+                    "lead_id": followup.get("lead_id"),
+                    "action": followup.get("action"),
                     "scheduled_time": scheduled_time.isoformat(),
-                    "message": follow_up.get("message"),
-                    "priority": follow_up.get("priority", "medium"),
+                    "priority": followup.get("priority", "medium"),
                     "status": "pending"
                 }
                 
-                # Use YOUR existing CRUD
-                await db_manager.create_followup(followup_record)
+                await db_manager.create_followup(record)
         
         except Exception as e:
             self.logger.error(f"Failed to schedule follow-up: {e}")
-            raise
-        
-        return scheduled_time.isoformat()
 
 
 # ============================================================================
@@ -348,10 +219,7 @@ class FollowUpAgent(BaseNode):
 # ============================================================================
 
 class BackgroundExecutor(BaseNode):
-    """
-    Execute Database and Follow-up agents in parallel
-    Runs AFTER user has already received response
-    """
+    """Execute DB and Follow-up in parallel"""
     
     def __init__(self):
         super().__init__("background_executor")
@@ -359,13 +227,10 @@ class BackgroundExecutor(BaseNode):
         self.followup_agent = FollowUpAgent()
     
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
-        """
-        Run background tasks in parallel
-        """
+        """Run background tasks"""
         
         self.logger.info("Starting background tasks...")
         
-        # Run both agents in parallel
         tasks = [
             self.database_agent.execute(state),
             self.followup_agent.execute(state)
@@ -373,12 +238,10 @@ class BackgroundExecutor(BaseNode):
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Merge results
         final_state = state.copy()
         
         for result in results:
             if isinstance(result, dict):
-                # Merge state updates
                 for key, value in result.items():
                     if isinstance(value, list) and key in final_state:
                         if key == "completed_actions":
@@ -404,10 +267,7 @@ class BackgroundExecutor(BaseNode):
         return final_state
 
 
-# ============================================================================
-# Export instances
-# ============================================================================
-
+# Export
 database_agent = DatabaseAgent()
 followup_agent = FollowUpAgent()
 background_executor = BackgroundExecutor()
