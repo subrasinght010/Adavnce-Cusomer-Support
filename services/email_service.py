@@ -1,12 +1,12 @@
 # services/email_service.py
-"""
-Email Service - SendGrid with Thread Support
-"""
+"""Email Service - SendGrid with Attachment Support"""
 
 import os
+import base64
 from typing import Optional
+from pathlib import Path
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Email, To, Content
+from sendgrid.helpers.mail import Mail, Email, To, Content, Attachment, FileContent, FileName, FileType, Disposition
 
 async def send_email(
     to: str,
@@ -16,13 +16,35 @@ async def send_email(
     thread_id: Optional[str] = None,
     reply_to_message_id: Optional[str] = None
 ) -> bool:
+    """Send email without attachment"""
+    return await send_email_with_attachment(
+        to=to,
+        subject=subject,
+        body=body,
+        from_email=from_email,
+        thread_id=thread_id,
+        reply_to_message_id=reply_to_message_id,
+        attachment_path=None
+    )
+
+
+async def send_email_with_attachment(
+    to: str,
+    subject: str,
+    body: str,
+    attachment_paths: Optional[list] = None,
+    from_email: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    reply_to_message_id: Optional[str] = None
+) -> bool:
     """
-    Send email using SendGrid with threading support
+    Send email with multiple attachments using SendGrid
     
     Args:
         to: Recipient email
         subject: Email subject
         body: HTML body content
+        attachment_paths: List of file paths to attach (optional)
         from_email: Sender email (optional)
         thread_id: Email thread ID for threading
         reply_to_message_id: Message ID to reply to
@@ -40,15 +62,33 @@ async def send_email(
         # Add threading headers
         if reply_to_message_id:
             message.reply_to = reply_to_message_id
-            # Add custom headers for threading
-            message.custom_args = {
-                "In-Reply-To": reply_to_message_id
-            }
+            message.custom_args = {"In-Reply-To": reply_to_message_id}
         
         if thread_id:
             if not message.custom_args:
                 message.custom_args = {}
             message.custom_args["References"] = thread_id
+        
+        # Add multiple attachments
+        if attachment_paths:
+            for attachment_path in attachment_paths:
+                if Path(attachment_path).exists():
+                    with open(attachment_path, 'rb') as f:
+                        file_data = f.read()
+                        encoded_file = base64.b64encode(file_data).decode()
+                        
+                        file_name = Path(attachment_path).name
+                        file_type = _get_mime_type(attachment_path)
+                        
+                        attached_file = Attachment(
+                            FileContent(encoded_file),
+                            FileName(file_name),
+                            FileType(file_type),
+                            Disposition('attachment')
+                        )
+                        message.add_attachment(attached_file)
+                        
+                        print(f"📎 Attached: {file_name} ({file_type})")
         
         sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
         response = sg.send(message)
@@ -61,53 +101,27 @@ async def send_email(
         return False
 
 
-def get_email_template(template_name: str, **kwargs) -> str:
-    """
-    Get email template and populate with data
+def _get_mime_type(file_path: str) -> str:
+    """Get MIME type from file extension"""
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(file_path)
     
-    Args:
-        template_name: Template name (pricing_details, callback_confirmation, etc.)
-        **kwargs: Template variables
-    """
-    templates = {
-        "pricing_details": """
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2>TechCorp Pricing Details</h2>
-            <p>Dear {name},</p>
-            <p>Thank you for your interest in our products. Please find our pricing details below:</p>
-            {pricing_content}
-            <p>If you have any questions, feel free to reach out!</p>
-            <p>Best regards,<br>TechCorp Support Team</p>
-        </body>
-        </html>
-        """,
-        
-        "callback_confirmation": """
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2>Callback Scheduled</h2>
-            <p>Dear {name},</p>
-            <p>Your callback has been scheduled for:</p>
-            <p style="font-size: 18px; font-weight: bold;">{callback_time}</p>
-            <p>We'll call you at: {phone}</p>
-            <p>Best regards,<br>TechCorp Support Team</p>
-        </body>
-        </html>
-        """,
-        
-        "product_catalog": """
-        <html>
-        <body style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2>Product Catalog</h2>
-            <p>Dear {name},</p>
-            <p>Thank you for your interest! Please find attached our latest product catalog.</p>
-            <p>Explore our range of products and let us know if you have any questions.</p>
-            <p>Best regards,<br>TechCorp Support Team</p>
-        </body>
-        </html>
-        """
+    if mime_type:
+        return mime_type
+    
+    # Fallback for common types
+    ext = Path(file_path).suffix.lower()
+    mime_map = {
+        '.pdf': 'application/pdf',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.txt': 'text/plain',
+        '.csv': 'text/csv',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png'
     }
     
-    template = templates.get(template_name, templates["pricing_details"])
-    return template.format(**kwargs)
+    return mime_map.get(ext, 'application/octet-stream')

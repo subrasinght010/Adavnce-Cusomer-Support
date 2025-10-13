@@ -1,286 +1,115 @@
 # nodes/message_intelligence_agent.py
 """
-Message Intelligence Agent - Formats and optimizes messages for each channel
+Message Intelligence Agent - AI-enhanced template formatting + DB save
 """
 
-import json
-from typing import Dict, List, Optional
+from typing import Dict, List
 from datetime import datetime
+from langchain_core.prompts import PromptTemplate
 
 from nodes.core.base_node import BaseNode
-from state.workflow_state import OptimizedWorkflowState, ChannelType, DirectionType
+from state.workflow_state import OptimizedWorkflowState
 from tools.language_model import llm
+from database.db import get_db
+from database.crud import DBManager
 
 
 class MessageIntelligenceAgent(BaseNode):
-    """Transforms raw intelligence output into channel-optimized messages"""
+    """Formats messages with AI personalization + saves to DB"""
     
     def __init__(self):
         super().__init__("message_intelligence")
         self.llm = llm
         
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
-        """Format message based on channel and direction"""
+        """Process pending sends + save AI response to DB"""
         
-        intelligence = state.get("intelligence_output", {})
-        raw_text = intelligence.get("response_text", "")
+        # Process pending sends
+        pending = state.get("pending_sends", [])
         
-        if not raw_text:
-            self.logger.warning("No text to format")
-            return state
-        
-        channel = state.get("channel")
-        direction = state.get("direction")
-        lead_data = state.get("lead_data", {})
-        conversation_history = state.get("conversation_history", [])
-        
-        self.logger.info(f"Formatting {direction} message for {channel}")
-        
-        try:
-            pending = state.get("pending_sends", [])
-    
-            if pending:
-                self.logger.info(f"Processing {len(pending)} pending sends")
-                
-                # Get full conversation context
-                conversation_summary = self._build_conversation_summary(
-                    state.get("conversation_history", [])
-                )
-                
-                # Process each pending send
-                for item in pending:
-                    try:
-                        await self._process_pending_send(item, conversation_summary, state)
-                    except Exception as e:
-                        self.logger.error(f"Failed to send via {item['channel']}: {e}")
-                
-                # Clear pending sends
-                state["pending_sends"] = []
-                state["communication_sent"] = True
-
-            # Detect if this is a reply/follow-up
-            is_reply = len(conversation_history) > 0
+        if pending:
+            self.logger.info(f"Processing {len(pending)} pending sends")
             
-            # Format based on channel
-            if channel == ChannelType.EMAIL:
-                formatted = await self._format_email(
-                    raw_text, lead_data, direction, intelligence, is_reply, conversation_history
-                )
-            elif channel == ChannelType.SMS:
-                formatted = self._format_sms(raw_text, lead_data)
-            elif channel == ChannelType.WHATSAPP:
-                formatted = self._format_whatsapp(raw_text, lead_data)
-            else:
-                formatted = {"text": raw_text}
+            conversation_summary = self._build_conversation_summary(
+                state.get("conversation_history", [])
+            )
             
-            # Update intelligence output with formatted version
-            intelligence["response_text"] = formatted.get("text") or formatted.get("body_text")
-            intelligence["formatted_message"] = formatted
-            state["intelligence_output"] = intelligence
+            for item in pending:
+                try:
+                    await self._process_pending_send(item, conversation_summary)
+                except Exception as e:
+                    self.logger.error(f"Failed to send via {item['channel']}: {e}")
             
-            self.logger.info("✓ Message formatted")
-            
-        except Exception as e:
-            self.logger.error(f"Formatting failed: {e}")
-            # Keep original text on failure
+            state["pending_sends"] = []
+            state["communication_sent"] = True
+        
+        # Save only AI response (webhook already saved incoming)
+        await self._save_ai_response(state)
         
         return state
     
-    async def _format_email(
-        self, 
-        raw_text: str, 
-        lead_data: Dict, 
-        direction: DirectionType,
-        intelligence: Dict
-    ) -> Dict:
-        """Format for email with subject, HTML, and personalization"""
-        
-        name = lead_data.get("name", "there")
-        intent = intelligence.get("intent", "general")
-        
-        # Generate subject line
-        if direction == DirectionType.INBOUND:
-            subject = await self._generate_subject_inbound(intent, raw_text)
-        else:
-            call_type = intelligence.get("call_type", "follow_up")
-            subject = await self._generate_subject_outbound(call_type, lead_data)
-        
-        # Create HTML body
-        body_html = self._create_html_template(name, raw_text, direction)
-        
-        # Plain text fallback
-        body_text = f"Hi {name},\n\n{raw_text}\n\nBest regards,\nTechCorp Team"
-        
-        return {
-            "subject": subject,
-            "body_html": body_html,
-            "body_text": body_text,
-            "text": body_text  # For communication agent
-        }
-    
-    async def _generate_subject_inbound(self, intent: str, text: str) -> str:
-        """Generate email subject for inbound responses"""
-        
-        subject_map = {
-            "product_query": "Product Information - TechCorp",
-            "pricing_query": "Pricing Details - TechCorp",
-            "callback_request": "Callback Scheduled - TechCorp",
-            "complaint": "We're Here to Help - TechCorp",
-            "technical_support": "Technical Support - TechCorp"
-        }
-        
-        # Use mapping or generate with LLM
-        if intent in subject_map:
-            return subject_map[intent]
-        
-        # LLM fallback for custom subjects
+    async def _save_incoming_message(self, state: OptimizedWorkflowState):
+        """Save user message to DB"""
         try:
-            prompt = f"""Generate a concise, professional email subject (max 50 chars) for this response:
-            "{text[:100]}..."
-
-            Subject:"""
-            subject = await self.llm.agenerate([prompt], max_tokens=20)
-            return subject[0][0].text.strip().strip('"')[:50]
-        except:
-            return "Re: Your Inquiry - TechCorp"
-    
-    async def _generate_subject_outbound(self, call_type: str, lead_data: Dict) -> str:
-        """Generate email subject for outbound campaigns"""
-        
-        company = lead_data.get("company", "")
-        name = lead_data.get("name", "")
-        
-        # Cold email subjects with personalization
-        templates = {
-            "cold": [
-                f"Quick question about {company}" if company else "Quick question",
-                f"Idea for {name}",
-                "Worth a conversation?"
-            ],
-            "warm": [
-                f"Following up - {company}" if company else "Following up",
-                f"Checking back in"
-            ],
-            "hot": [
-                "Ready when you are",
-                "Let's move forward"
-            ],
-            "follow_up": [
-                "Just checking in",
-                f"Re: Our conversation"
-            ]
-        }
-        
-        subjects = templates.get(call_type, templates["follow_up"])
-        return subjects[0]  # Can implement A/B testing here
-    
-    def _create_html_template(self, name: str, content: str, direction: DirectionType) -> str:
-        """Create responsive HTML email template"""
-        
-        # Add signature based on direction
-        if direction == DirectionType.OUTBOUND:
-            signature = """
-            <p>Best regards,<br>
-            <strong>Sales Team</strong><br>
-            TechCorp<br>
-            <a href="mailto:sales@techcorp.com">sales@techcorp.com</a></p>
-            """
-        else:
-            signature = """
-            <p>Best regards,<br>
-            <strong>Support Team</strong><br>
-            TechCorp<br>
-            <a href="mailto:support@techcorp.com">support@techcorp.com</a></p>
-            """
-        
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px 10px 0 0;">
-                <h2 style="color: white; margin: 0;">TechCorp</h2>
-            </div>
+            if not state.get("current_message"):
+                return
             
-            <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
-                <p style="font-size: 16px;">Hi {name},</p>
+            async with get_db() as db:
+                db_manager = DBManager(db)
                 
-                <div style="background: white; padding: 20px; border-radius: 5px; margin: 20px 0;">
-                    {self._format_paragraphs(content)}
-                </div>
+                await db_manager.add_conversation(
+                    lead_id=int(state.get("lead_id")),
+                    message=state["current_message"],
+                    channel=str(state.get("channel", "unknown")),
+                    sender="user",
+                    message_id=state.get("message_id"),
+                    intent_detected=state.get("detected_intent")
+                )
                 
-                {signature}
-                
-                <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
-                
-                <p style="font-size: 12px; color: #666; text-align: center;">
-                    © 2025 TechCorp. All rights reserved.<br>
-                    <a href="#" style="color: #667eea; text-decoration: none;">Unsubscribe</a>
-                </p>
-            </div>
-        </body>
-        </html>
-        """
+                self.logger.info("✓ Incoming message saved to DB")
+        except Exception as e:
+            self.logger.error(f"Failed to save incoming message: {e}")
     
-    def _format_paragraphs(self, text: str) -> str:
-        """Convert plain text to HTML paragraphs"""
-        paragraphs = text.split('\n\n')
-        return ''.join(f'<p style="margin: 10px 0;">{p.strip()}</p>' for p in paragraphs if p.strip())
+    async def _save_ai_response(self, state: OptimizedWorkflowState):
+        """Save AI response to DB"""
+        try:
+            intelligence = state.get("intelligence_output", {})
+            response_text = intelligence.get("response_text")
+            
+            if not response_text:
+                return
+            
+            async with get_db() as db:
+                db_manager = DBManager(db)
+                
+                await db_manager.add_conversation(
+                    lead_id=int(state.get("lead_id")),
+                    message=response_text,
+                    channel=str(state.get("channel", "unknown")),
+                    sender="ai",
+                    intent_detected=intelligence.get("intent"),
+                    cost=state.get("llm_calls_made", 0) * 0.001
+                )
+                
+                self.logger.info("✓ AI response saved to DB")
+        except Exception as e:
+            self.logger.error(f"Failed to save AI response: {e}")
     
-    def _format_sms(self, raw_text: str, lead_data: Dict) -> Dict:
-        """Format for SMS (160 char limit)"""
-        
-        # Truncate and add brand
-        max_length = 145  # Reserve 15 chars for signature
-        
-        if len(raw_text) > max_length:
-            truncated = raw_text[:max_length-3] + "..."
-        else:
-            truncated = raw_text
-        
-        # Add signature
-        formatted = f"{truncated} -TechCorp"
-        
-        return {
-            "text": formatted,
-            "length": len(formatted)
-        }
-    
-    def _format_whatsapp(self, raw_text: str, lead_data: Dict) -> Dict:
-        """Format for WhatsApp with emojis and structure"""
-        
-        name = lead_data.get("name", "there")
-        
-        # Add friendly emoji and structure
-        formatted = f"👋 Hi {name}!\n\n{raw_text}\n\nNeed help? Just reply here! 💬"
-        
-        return {
-            "text": formatted
-        }
-
     def _build_conversation_summary(self, history: List[Dict]) -> str:
-        """Build conversation summary for context"""
+        """Build conversation context (last 10 messages)"""
         if not history:
             return "No previous conversation"
         
         summary_lines = []
-        for msg in history[-10:]:  # Last 10 messages
+        for msg in history[-10:]:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             summary_lines.append(f"{role.title()}: {content[:100]}")
         
         return "\n".join(summary_lines)
     
-    async def _process_pending_send(
-        self,
-        item: Dict,
-        conversation_summary: str,
-        state: OptimizedWorkflowState
-    ):
-        """Send message with full context"""
+    async def _process_pending_send(self, item: Dict, conversation_summary: str):
+        """Send message with AI-personalized intro + static template"""
         
         channel = item["channel"]
         to = item["to"]
@@ -289,129 +118,809 @@ class MessageIntelligenceAgent(BaseNode):
         if channel == "email":
             await self._send_email_with_context(to, content_type, conversation_summary)
         elif channel == "sms":
-            await self._send_sms_with_context(to, content_type)
+            await self._send_sms_with_context(to, content_type, conversation_summary)
         elif channel == "whatsapp":
-            await self._send_whatsapp_with_context(to, content_type)
-
+            await self._send_whatsapp_with_context(to, content_type, conversation_summary)
+    
     async def _send_email_with_context(
         self,
         to: str,
         content_type: str,
         conversation_summary: str
     ):
-        """Send email with conversation context"""
-        from services.email_service import send_email
+        """Send email: AI analyzes request → fetches KB content → finds matching files → sends"""
+        from services.email_service import send_email_with_attachment
         
-        subject, body_template = self._get_email_template(content_type)
+        # Step 1: AI understands what user asked for
+        specific_request = await self._analyze_user_request(conversation_summary, content_type)
         
-        # Add conversation context
+        # Step 2: Fetch relevant KB content based on AI analysis
+        kb_content = await self._fetch_relevant_content(specific_request, content_type)
+        
+        # Step 3: Find matching attachment files
+        attachment_paths = self._get_attachment_path(content_type, specific_request)
+        
+        # Step 4: Generate personalized intro
+        personalized_intro = await self._generate_intro(
+            conversation_summary, content_type, "email"
+        )
+        
+        # Step 5: Build email body
+        subject = f"TechCorp {content_type.title()} Information"
         body = f"""
         <div style="font-family: Arial, sans-serif;">
             <h2>{subject}</h2>
-            {body_template}
             
-            <hr style="margin: 30px 0;">
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+                {personalized_intro}
+            </p>
             
-            <h3>Conversation Summary</h3>
-            <pre style="background: #f5f5f5; padding: 15px; border-radius: 5px;">
-    {conversation_summary}
-            </pre>
+            <div style="margin: 20px 0;">
+                {kb_content}
+            </div>
             
+            {f"<p style='margin-top: 20px;'>📎 Attached documents: {len(attachment_paths)} file(s)</p>" if attachment_paths else ""}
+            
+            <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
             <p style="color: #666; font-size: 12px;">
-                This email was sent following our conversation.
+                This email follows our conversation on {datetime.now().strftime('%B %d, %Y')}
             </p>
         </div>
         """
         
-        result = await send_email(to=to, subject=subject, body=body)
-        self.logger.info(f"Email sent to {to}: {result}")
-
-    async def _send_sms_with_context(self, to: str, content_type: str):
-        """Send SMS (no conversation context - too long)"""
+        result = await send_email_with_attachment(
+            to=to, 
+            subject=subject, 
+            body=body,
+            attachment_paths=attachment_paths
+        )
+        self.logger.info(f"✓ Email sent to {to} with {len(attachment_paths)} attachments")
+    
+    async def _send_sms_with_context(
+        self,
+        to: str,
+        content_type: str,
+        conversation_summary: str
+    ):
+        """Send SMS with AI-summarized content (no files, 160 char limit)"""
         from services.sms_service import send_sms
         
-        message = self._get_sms_template(content_type)
+        # AI generates ultra-concise summary from conversation
+        specific_request = await self._analyze_user_request(conversation_summary, content_type)
+        
+        # Fetch KB content
+        from tools.vector_store import query_knowledge_base
+        kb_results = query_knowledge_base(f"{content_type} {specific_request}", top_k=1, relevance_threshold=0.5)
+        
+        # AI condenses to SMS-friendly format
+        if kb_results:
+            sms_text = await self._condense_for_sms(kb_results[0]['content'], content_type)
+        else:
+            sms_text = self._get_sms_template(content_type)
+        
+        # Keep under 160 chars
+        message = sms_text[:160]
+        
         result = await send_sms(to_phone=to, message=message)
-        self.logger.info(f"SMS sent to {to}: {result}")
-
-    async def _send_whatsapp_with_context(self, to: str, content_type: str):
-        """Send WhatsApp"""
+        self.logger.info(f"✓ SMS sent to {to}")
+    
+    async def _send_whatsapp_with_context(
+        self,
+        to: str,
+        content_type: str,
+        conversation_summary: str
+    ):
+        """Send WhatsApp with AI-personalized intro"""
         from services.whatsapp_service import send_whatsapp
         
-        message = self._get_whatsapp_template(content_type)
+        # AI generates intro
+        intro = await self._generate_intro(
+            conversation_summary, content_type, "whatsapp"
+        )
+        
+        # Get template
+        template = self._get_whatsapp_template(content_type)
+        
+        # Combine
+        message = f"{intro}\n\n{template}"
+        
         result = await send_whatsapp(to_phone=to, message=message)
-        self.logger.info(f"WhatsApp sent to {to}: {result}")
+        self.logger.info(f"✓ WhatsApp sent to {to}")
+    
+    async def _analyze_user_request(self, conversation: str, content_type: str) -> str:
+        """AI extracts what specifically user asked for"""
+        
+        prompt = PromptTemplate.from_template("""
+            Analyze this conversation and extract EXACTLY what the user wants regarding {content_type}.
 
+            Conversation:
+            {conversation}
+
+            Output ONLY the specific aspect they're interested in (1-2 keywords).
+            Examples:
+            - "enterprise plan pricing" → "enterprise"
+            - "refund policy" → "refund"
+            - "API documentation" → "api"
+            - "all product features" → "all"
+
+            Your analysis:""")
+                    
+        response = await self.llm.ainvoke(
+            prompt.format(conversation=conversation[-500:], content_type=content_type)
+        )
+        
+        return response.content.strip().lower()
+    
+    async def _fetch_relevant_content(self, specific_request: str, content_type: str) -> str:
+        """Fetch KB content matching user's specific request"""
+        from tools.vector_store import query_knowledge_base
+        
+        # Search KB with specific request
+        query = f"{content_type} {specific_request}"
+        kb_results = query_knowledge_base(query, top_k=3, relevance_threshold=0.5)
+        
+        if kb_results:
+            content_html = ""
+            for doc in kb_results:
+                content_html += f"<div style='margin-bottom: 20px;'>{doc['content']}</div>"
+            return content_html
+        
+        # Fallback to generic template
+        return self._get_email_template(content_type)[1]
+    
+    def _get_attachment_path(self, content_type: str, specific_request: str = None) -> list:
+        """Find files matching content_type AND user's specific request"""
+        from pathlib import Path
+        
+        kb_path = Path('knowledge_base')
+        files = []
+        
+        # If user asked for something specific, prioritize matching files
+        if specific_request and specific_request != "all":
+            # Search for files containing specific keyword
+            files.extend(kb_path.glob(f"*{specific_request}*.pdf"))
+            files.extend(kb_path.glob(f"{content_type}*{specific_request}*.pdf"))
+        
+        # Add general files for content_type
+        patterns = {
+            'pricing': ['pricing*.pdf'],
+            'product': ['product*.pdf'],
+            'catalog': ['catalog*.pdf'],
+            'policy': ['polic*.pdf', 'terms*.pdf']
+        }
+        
+        for pattern in patterns.get(content_type, []):
+            files.extend(kb_path.glob(pattern))
+        
+        # Remove duplicates, return as strings
+        return list(set([str(f) for f in files if f.exists()]))
+    
+    async def _generate_intro(
+        self,
+        conversation: str,
+        content_type: str,
+        channel: str
+    ) -> str:
+        """Use LLM to generate personalized intro based on conversation"""
+        
+        # Adjust length based on channel
+        max_length = {
+            "email": "2-3 sentences",
+            "sms": "1 short sentence (max 40 chars)",
+            "whatsapp": "1-2 sentences"
+        }.get(channel, "1-2 sentences")
+        
+        prompt = PromptTemplate.from_template("""
+            Based on this conversation, write a personalized intro for sending {content_type} information via {channel}.
+
+            Conversation Context:
+            {conversation}
+
+            Requirements:
+            - Length: {max_length}
+            - Tone: Professional but friendly
+            - Reference what user asked about
+            - Natural transition to the content below
+
+            Output ONLY the intro text, nothing else.
+
+            Example for pricing request: "As discussed, here's the detailed pricing breakdown you requested for our Enterprise plan."
+            Example for product info: "Following up on your question about our API features, here's the complete documentation."
+
+            Your intro:""")
+        
+        response = await self.llm.ainvoke(
+            prompt.format(
+                conversation=conversation[-500:],  # Last 500 chars
+                content_type=content_type,
+                channel=channel,
+                max_length=max_length
+            )
+        )
+        
+        return response.content.strip()
+    
+    async def _condense_for_sms(self, kb_content: str, content_type: str) -> str:
+        """AI condenses KB content to 1-2 lines for SMS"""
+        
+        prompt = PromptTemplate.from_template("""
+            Condense this to 1-2 lines for SMS (max 140 chars):
+
+            {content}
+
+            Focus only on key {content_type} details. Be ultra-concise.
+
+            Your SMS text:""")
+        
+        response = await self.llm.ainvoke(
+            prompt.format(content=kb_content[:500], content_type=content_type)
+        )
+        
+        return response.content.strip()
+    
     def _get_email_template(self, content_type: str):
-        """Email templates with HTML"""
+        """Fetch template from KB or use static fallback"""
+        from tools.vector_store import query_knowledge_base
+        
+        # Try to get content from KB
+        kb_results = query_knowledge_base(content_type, top_k=3, relevance_threshold=0.6)
+        
+        if kb_results:
+            # Use KB content
+            kb_content = "\n\n".join([
+                f"<div style='margin-bottom: 20px;'>{doc['content']}</div>" 
+                for doc in kb_results
+            ])
+            return (f'TechCorp {content_type.title()} Information', kb_content)
+        
+        # Fallback to static templates
         templates = {
             'pricing': (
                 'TechCorp Pricing Plans',
                 '''
-                <h3>Our Pricing Plans</h3>
-                <table style="border-collapse: collapse; width: 100%;">
+                <table style="border-collapse: collapse; width: 100%; margin-top: 20px;">
                     <tr style="background: #f0f0f0;">
-                        <th style="padding: 10px; text-align: left;">Plan</th>
-                        <th style="padding: 10px; text-align: left;">Price</th>
-                        <th style="padding: 10px; text-align: left;">Features</th>
+                        <th style="padding: 12px; text-align: left;">Plan</th>
+                        <th style="padding: 12px; text-align: left;">Price</th>
+                        <th style="padding: 12px; text-align: left;">Features</th>
                     </tr>
                     <tr>
-                        <td style="padding: 10px;">Basic</td>
-                        <td style="padding: 10px;">$99/month</td>
-                        <td style="padding: 10px;">Core features</td>
+                        <td style="padding: 12px;">Basic</td>
+                        <td style="padding: 12px;"><strong>$99/month</strong></td>
+                        <td style="padding: 12px;">Core features, 10GB storage</td>
                     </tr>
                     <tr style="background: #f9f9f9;">
-                        <td style="padding: 10px;">Pro</td>
-                        <td style="padding: 10px;">$199/month</td>
-                        <td style="padding: 10px;">Advanced features</td>
+                        <td style="padding: 12px;">Pro</td>
+                        <td style="padding: 12px;"><strong>$199/month</strong></td>
+                        <td style="padding: 12px;">Advanced features, 100GB storage, Priority support</td>
                     </tr>
                     <tr>
-                        <td style="padding: 10px;">Enterprise</td>
-                        <td style="padding: 10px;">Custom</td>
-                        <td style="padding: 10px;">Full suite</td>
+                        <td style="padding: 12px;">Enterprise</td>
+                        <td style="padding: 12px;"><strong>Custom</strong></td>
+                        <td style="padding: 12px;">Full suite, Unlimited storage, Dedicated account manager</td>
                     </tr>
                 </table>
+                <p style="margin-top: 20px;">Visit <a href="https://techcorp.com/pricing">techcorp.com/pricing</a> for full details.</p>
                 '''
             ),
             'product': (
                 'TechCorp Product Information',
-                '<p>Detailed product information attached...</p>'
+                '''
+                <h3>Product Features</h3>
+                <ul style="line-height: 1.8;">
+                    <li>AI-powered automation</li>
+                    <li>Real-time analytics dashboard</li>
+                    <li>Multi-channel integration</li>
+                    <li>99.9% uptime SLA</li>
+                </ul>
+                <p>Learn more: <a href="https://techcorp.com/products">techcorp.com/products</a></p>
+                '''
             ),
-            'catalog': (
-                'TechCorp Full Catalog',
-                '<p>Our complete product catalog is attached.</p>'
+            'policy': (
+                'TechCorp Policies',
+                '''
+                <h3>Our Policies</h3>
+                <ul style="line-height: 1.8;">
+                    <li><strong>Refund:</strong> 30-day money-back guarantee</li>
+                    <li><strong>Shipping:</strong> 5-7 business days standard</li>
+                    <li><strong>Support:</strong> 24/7 technical assistance</li>
+                    <li><strong>Privacy:</strong> Your data is secure with us</li>
+                </ul>
+                <p>Full details: <a href="https://techcorp.com/policies">techcorp.com/policies</a></p>
+                '''
             )
         }
-        return templates.get(content_type, ('TechCorp Info', '<p>Information as requested</p>'))
-
+        return templates.get(content_type, ('TechCorp Information', '<p>Information as requested</p>'))
+    
     def _get_sms_template(self, content_type: str):
-        """SMS templates (160 char limit)"""
+        """Fallback SMS templates (no KB search, just static)"""
         templates = {
-            'pricing': 'TechCorp Pricing: Basic $99/mo, Pro $199/mo, Enterprise custom. Details: techcorp.com/pricing',
-            'product': 'TechCorp Product info: techcorp.com/products',
-            'catalog': 'Full catalog: techcorp.com/catalog'
+            'pricing': 'Basic $99/mo, Pro $199/mo, Enterprise custom. Details: techcorp.com/pricing',
+            'product': 'Product info: techcorp.com/products',
+            'policy': 'Policies: techcorp.com/policies'
         }
         return templates.get(content_type, 'Info: techcorp.com')
-
+    
     def _get_whatsapp_template(self, content_type: str):
-        """WhatsApp templates with emojis"""
+        """WhatsApp templates - try KB first, fallback to static"""
+        from tools.vector_store import query_knowledge_base
+        
+        # Try KB
+        kb_results = query_knowledge_base(content_type, top_k=2, relevance_threshold=0.6)
+        if kb_results:
+            kb_text = "\n\n".join([doc['content'][:300] for doc in kb_results])
+            return f"📄 *{content_type.title()} Information*\n\n{kb_text}\n\n🔗 techcorp.com"
+        
+        # Static fallback
         templates = {
-            'pricing': '''💰 *TechCorp Pricing Plans*
+            'pricing': '''💰 *Pricing Plans*
 
-        ✅ Basic: $99/month
-        ✅ Pro: $199/month  
-        ✅ Enterprise: Custom pricing
+            ✅ Basic: $99/month
+            ✅ Pro: $199/month  
+            ✅ Enterprise: Custom
 
-        Visit: techcorp.com/pricing''',
-                'product': '''📦 *Product Information*
+            🔗 techcorp.com/pricing''',
+                        
+                        'product': '''📦 *Product Info*
 
-        Check out our products at:
-        techcorp.com/products''',
-                'catalog': '''📚 *Full Catalog*
+            Our platform includes:
+            • AI automation
+            • Real-time analytics
+            • Multi-channel support
 
-        Download our complete catalog:
-        techcorp.com/catalog'''
-            }
-        return templates.get(content_type, 'More info at techcorp.com')
-# Singleton instance
+            🔗 techcorp.com/products''',
+                        
+                        'policy': '''📋 *Our Policies*
+
+            • 30-day refund guarantee
+            • 5-7 day shipping
+            • 24/7 support
+            • Secure data privacy
+
+            🔗 techcorp.com/policies'''
+                    }
+        return templates.get(content_type, '🔗 More info: techcorp.com')
+
+
+# Singleton
+message_intelligence_agent = MessageIntelligenceAgent()
+# nodes/message_intelligence_agent.py
+"""
+Message Intelligence Agent - AI-enhanced template formatting
+"""
+
+from typing import Dict, List
+from datetime import datetime
+from langchain_core.prompts import PromptTemplate
+
+from nodes.core.base_node import BaseNode
+from state.workflow_state import OptimizedWorkflowState
+from tools.language_model import llm
+
+
+class MessageIntelligenceAgent(BaseNode):
+    """Formats messages with AI personalization + static templates"""
+    
+    def __init__(self):
+        super().__init__("message_intelligence")
+        self.llm = llm
+        
+    async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
+        """Process pending sends with AI-enhanced context"""
+        
+        pending = state.get("pending_sends", [])
+        
+        if not pending:
+            return state
+        
+        self.logger.info(f"Processing {len(pending)} pending sends")
+        
+        # Build conversation context
+        conversation_summary = self._build_conversation_summary(
+            state.get("conversation_history", [])
+        )
+        
+        # Process each pending send
+        for item in pending:
+            try:
+                await self._process_pending_send(item, conversation_summary)
+            except Exception as e:
+                self.logger.error(f"Failed to send via {item['channel']}: {e}")
+        
+        # Clear pending sends
+        state["pending_sends"] = []
+        state["communication_sent"] = True
+        
+        return state
+    
+    def _build_conversation_summary(self, history: List[Dict]) -> str:
+        """Build conversation context (last 10 messages)"""
+        if not history:
+            return "No previous conversation"
+        
+        summary_lines = []
+        for msg in history[-10:]:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            summary_lines.append(f"{role.title()}: {content[:100]}")
+        
+        return "\n".join(summary_lines)
+    
+    async def _process_pending_send(self, item: Dict, conversation_summary: str):
+        """Send message with AI-personalized intro + static template"""
+        
+        channel = item["channel"]
+        to = item["to"]
+        content_type = item["content_type"]
+        
+        if channel == "email":
+            await self._send_email_with_context(to, content_type, conversation_summary)
+        elif channel == "sms":
+            await self._send_sms_with_context(to, content_type, conversation_summary)
+        elif channel == "whatsapp":
+            await self._send_whatsapp_with_context(to, content_type, conversation_summary)
+    
+    async def _send_email_with_context(
+        self,
+        to: str,
+        content_type: str,
+        conversation_summary: str
+    ):
+        """Send email: AI analyzes request → fetches KB content → finds matching files → sends"""
+        from services.email_service import send_email_with_attachment
+        
+        # Step 1: AI understands what user asked for
+        specific_request = await self._analyze_user_request(conversation_summary, content_type)
+        
+        # Step 2: Fetch relevant KB content based on AI analysis
+        kb_content = await self._fetch_relevant_content(specific_request, content_type)
+        
+        # Step 3: Find matching attachment files
+        attachment_paths = self._get_attachment_path(content_type, specific_request)
+        
+        # Step 4: Generate personalized intro
+        personalized_intro = await self._generate_intro(
+            conversation_summary, content_type, "email"
+        )
+        
+        # Step 5: Build email body
+        subject = f"TechCorp {content_type.title()} Information"
+        body = f"""
+        <div style="font-family: Arial, sans-serif;">
+            <h2>{subject}</h2>
+            
+            <p style="color: #333; font-size: 16px; line-height: 1.6;">
+                {personalized_intro}
+            </p>
+            
+            <div style="margin: 20px 0;">
+                {kb_content}
+            </div>
+            
+            {f"<p style='margin-top: 20px;'>📎 Attached documents: {len(attachment_paths)} file(s)</p>" if attachment_paths else ""}
+            
+            <hr style="margin: 30px 0; border: none; border-top: 1px solid #ddd;">
+            <p style="color: #666; font-size: 12px;">
+                This email follows our conversation on {datetime.now().strftime('%B %d, %Y')}
+            </p>
+        </div>
+        """
+        
+        result = await send_email_with_attachment(
+            to=to, 
+            subject=subject, 
+            body=body,
+            attachment_paths=attachment_paths
+        )
+        self.logger.info(f"✓ Email sent to {to} with {len(attachment_paths)} attachments")
+    
+    async def _analyze_user_request(self, conversation: str, content_type: str) -> str:
+        """AI extracts what specifically user asked for"""
+        from langchain_core.prompts import PromptTemplate
+        
+        prompt = PromptTemplate.from_template("""
+            Analyze this conversation and extract EXACTLY what the user wants regarding {content_type}.
+
+            Conversation:
+            {conversation}
+
+            Output ONLY the specific aspect they're interested in (1-2 keywords).
+            Examples:
+            - "enterprise plan pricing" → "enterprise"
+            - "refund policy" → "refund"
+            - "API documentation" → "api"
+            - "all product features" → "all"
+
+            Your analysis:""")
+        
+        response = await self.llm.ainvoke(
+            prompt.format(conversation=conversation[-500:], content_type=content_type)
+        )
+        
+        return response.content.strip().lower()
+    
+    async def _fetch_relevant_content(self, specific_request: str, content_type: str) -> str:
+        """Fetch KB content matching user's specific request"""
+        from tools.vector_store import query_knowledge_base
+        
+        # Search KB with specific request
+        query = f"{content_type} {specific_request}"
+        kb_results = query_knowledge_base(query, top_k=3, relevance_threshold=0.5)
+        
+        if kb_results:
+            content_html = ""
+            for doc in kb_results:
+                content_html += f"<div style='margin-bottom: 20px;'>{doc['content']}</div>"
+            return content_html
+        
+        # Fallback to generic template
+        return self._get_email_template(content_type)[1]
+    
+    def _get_attachment_path(self, content_type: str, specific_request: str = None) -> list:
+        """Find files matching content_type AND user's specific request"""
+        from pathlib import Path
+        
+        kb_path = Path('knowledge_base')
+        files = []
+        
+        # If user asked for something specific, prioritize matching files
+        if specific_request and specific_request != "all":
+            # Search for files containing specific keyword
+            files.extend(kb_path.glob(f"*{specific_request}*.pdf"))
+            files.extend(kb_path.glob(f"{content_type}*{specific_request}*.pdf"))
+        
+        # Add general files for content_type
+        patterns = {
+            'pricing': ['pricing*.pdf'],
+            'product': ['product*.pdf'],
+            'catalog': ['catalog*.pdf'],
+            'policy': ['polic*.pdf', 'terms*.pdf']
+        }
+        
+        for pattern in patterns.get(content_type, []):
+            files.extend(kb_path.glob(pattern))
+        
+        # Remove duplicates, return as strings
+        return list(set([str(f) for f in files if f.exists()]))
+    
+    async def _send_sms_with_context(
+        self,
+        to: str,
+        content_type: str,
+        conversation_summary: str
+    ):
+        """Send SMS with AI-summarized content (no files, 160 char limit)"""
+        from services.sms_service import send_sms
+        
+        # AI generates ultra-concise summary from conversation
+        specific_request = await self._analyze_user_request(conversation_summary, content_type)
+        
+        # Fetch KB content
+        from tools.vector_store import query_knowledge_base
+        kb_results = query_knowledge_base(f"{content_type} {specific_request}", top_k=1, relevance_threshold=0.5)
+        
+        # AI condenses to SMS-friendly format
+        if kb_results:
+            sms_text = await self._condense_for_sms(kb_results[0]['content'], content_type)
+        else:
+            sms_text = self._get_sms_template(content_type)
+        
+        # Keep under 160 chars
+        message = sms_text[:160]
+        
+        result = await send_sms(to_phone=to, message=message)
+        self.logger.info(f"✓ SMS sent to {to}")
+    
+    async def _condense_for_sms(self, kb_content: str, content_type: str) -> str:
+        """AI condenses KB content to 1-2 lines for SMS"""
+        from langchain_core.prompts import PromptTemplate
+        
+        prompt = PromptTemplate.from_template("""
+            Condense this to 1-2 lines for SMS (max 140 chars):
+
+            {content}
+
+            Focus only on key {content_type} details. Be ultra-concise.
+
+            Your SMS text:""")
+        
+        response = await self.llm.ainvoke(
+            prompt.format(content=kb_content[:500], content_type=content_type)
+        )
+        
+        return response.content.strip()
+    
+    async def _send_whatsapp_with_context(
+        self,
+        to: str,
+        content_type: str,
+        conversation_summary: str
+    ):
+        """Send WhatsApp with AI-personalized intro"""
+        from services.whatsapp_service import send_whatsapp
+        
+        # AI generates intro
+        intro = await self._generate_intro(
+            conversation_summary, content_type, "whatsapp"
+        )
+        
+        # Get template
+        template = self._get_whatsapp_template(content_type)
+        
+        # Combine
+        message = f"{intro}\n\n{template}"
+        
+        result = await send_whatsapp(to_phone=to, message=message)
+        self.logger.info(f"✓ WhatsApp sent to {to}: {result}")
+    
+    async def _generate_intro(
+        self,
+        conversation: str,
+        content_type: str,
+        channel: str
+    ) -> str:
+        """Use LLM to generate personalized intro based on conversation"""
+        
+        # Adjust length based on channel
+        max_length = {
+            "email": "2-3 sentences",
+            "sms": "1 short sentence (max 40 chars)",
+            "whatsapp": "1-2 sentences"
+        }.get(channel, "1-2 sentences")
+        
+        prompt = PromptTemplate.from_template("""
+            Based on this conversation, write a personalized intro for sending {content_type} information via {channel}.
+
+            Conversation Context:
+            {conversation}
+
+            Requirements:
+            - Length: {max_length}
+            - Tone: Professional but friendly
+            - Reference what user asked about
+            - Natural transition to the content below
+
+            Output ONLY the intro text, nothing else.
+
+            Example for pricing request: "As discussed, here's the detailed pricing breakdown you requested for our Enterprise plan."
+            Example for product info: "Following up on your question about our API features, here's the complete documentation."
+
+            Your intro:""")
+        
+        response = await self.llm.ainvoke(
+            prompt.format(
+                conversation=conversation[-500:],  # Last 500 chars
+                content_type=content_type,
+                channel=channel,
+                max_length=max_length
+            )
+        )
+        
+        return response.content.strip()
+    
+    def _get_email_template(self, content_type: str):
+        """Fetch template from KB or use static fallback"""
+        from tools.vector_store import query_knowledge_base
+        
+        # Try to get content from KB
+        kb_results = query_knowledge_base(content_type, top_k=3, relevance_threshold=0.6)
+        
+        if kb_results:
+            # Use KB content
+            kb_content = "\n\n".join([
+                f"<div style='margin-bottom: 20px;'>{doc['content']}</div>" 
+                for doc in kb_results
+            ])
+            return (f'TechCorp {content_type.title()} Information', kb_content)
+        
+        # Fallback to static templates
+        templates = {
+            'pricing': (
+                'TechCorp Pricing Plans',
+                '''
+                <table style="border-collapse: collapse; width: 100%; margin-top: 20px;">
+                    <tr style="background: #f0f0f0;">
+                        <th style="padding: 12px; text-align: left;">Plan</th>
+                        <th style="padding: 12px; text-align: left;">Price</th>
+                        <th style="padding: 12px; text-align: left;">Features</th>
+                    </tr>
+                    <tr>
+                        <td style="padding: 12px;">Basic</td>
+                        <td style="padding: 12px;"><strong>$99/month</strong></td>
+                        <td style="padding: 12px;">Core features, 10GB storage</td>
+                    </tr>
+                    <tr style="background: #f9f9f9;">
+                        <td style="padding: 12px;">Pro</td>
+                        <td style="padding: 12px;"><strong>$199/month</strong></td>
+                        <td style="padding: 12px;">Advanced features, 100GB storage, Priority support</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 12px;">Enterprise</td>
+                        <td style="padding: 12px;"><strong>Custom</strong></td>
+                        <td style="padding: 12px;">Full suite, Unlimited storage, Dedicated account manager</td>
+                    </tr>
+                </table>
+                <p style="margin-top: 20px;">Visit <a href="https://techcorp.com/pricing">techcorp.com/pricing</a> for full details.</p>
+                '''
+            ),
+            'product': (
+                'TechCorp Product Information',
+                '''
+                <h3>Product Features</h3>
+                <ul style="line-height: 1.8;">
+                    <li>AI-powered automation</li>
+                    <li>Real-time analytics dashboard</li>
+                    <li>Multi-channel integration</li>
+                    <li>99.9% uptime SLA</li>
+                </ul>
+                <p>Learn more: <a href="https://techcorp.com/products">techcorp.com/products</a></p>
+                '''
+            ),
+            'policy': (
+                'TechCorp Policies',
+                '''
+                <h3>Our Policies</h3>
+                <ul style="line-height: 1.8;">
+                    <li><strong>Refund:</strong> 30-day money-back guarantee</li>
+                    <li><strong>Shipping:</strong> 5-7 business days standard</li>
+                    <li><strong>Support:</strong> 24/7 technical assistance</li>
+                    <li><strong>Privacy:</strong> Your data is secure with us</li>
+                </ul>
+                <p>Full details: <a href="https://techcorp.com/policies">techcorp.com/policies</a></p>
+                '''
+            )
+        }
+        return templates.get(content_type, ('TechCorp Information', '<p>Information as requested</p>'))
+    
+    def _get_sms_template(self, content_type: str):
+        """Fallback SMS templates (no KB search, just static)"""
+        templates = {
+            'pricing': 'Basic $99/mo, Pro $199/mo, Enterprise custom. Details: techcorp.com/pricing',
+            'product': 'Product info: techcorp.com/products',
+            'policy': 'Policies: techcorp.com/policies'
+        }
+        return templates.get(content_type, 'Info: techcorp.com')
+    
+    def _get_whatsapp_template(self, content_type: str):
+        """WhatsApp templates - try KB first, fallback to static"""
+        from tools.vector_store import query_knowledge_base
+        
+        # Try KB
+        kb_results = query_knowledge_base(content_type, top_k=2, relevance_threshold=0.6)
+        if kb_results:
+            kb_text = "\n\n".join([doc['content'][:300] for doc in kb_results])
+            return f"📄 *{content_type.title()} Information*\n\n{kb_text}\n\n🔗 techcorp.com"
+        
+        # Static fallback
+        templates = {
+            'pricing': '''💰 *Pricing Plans*
+
+            ✅ Basic: $99/month
+            ✅ Pro: $199/month  
+            ✅ Enterprise: Custom
+
+            🔗 techcorp.com/pricing''',
+                        
+                        'product': '''📦 *Product Info*
+
+            Our platform includes:
+            • AI automation
+            • Real-time analytics
+            • Multi-channel support
+
+            🔗 techcorp.com/products''',
+                        
+                        'policy': '''📋 *Our Policies*
+
+            • 30-day refund guarantee
+            • 5-7 day shipping
+            • 24/7 support
+            • Secure data privacy
+
+            🔗 techcorp.com/policies'''
+                    }
+        return templates.get(content_type, '🔗 More info: techcorp.com')
+
+
+# Singleton
 message_intelligence_agent = MessageIntelligenceAgent()

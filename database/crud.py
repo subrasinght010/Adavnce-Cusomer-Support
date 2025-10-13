@@ -36,7 +36,6 @@ class DBManager:
         email: str,
         phone: str,
         organization_id: int = None,
-        whatsapp_number: str = None,
         source: str = None,
         utm_json: dict = None
     ):
@@ -47,7 +46,6 @@ class DBManager:
                 email=email,
                 phone=phone,
                 organization_id=organization_id,
-                whatsapp_number=whatsapp_number,
                 source=source,
                 utm_json=utm_json,
                 message_count=0,

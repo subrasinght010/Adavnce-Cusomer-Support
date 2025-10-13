@@ -36,9 +36,17 @@ class Lead(BaseModel):
     __tablename__ = "leads"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    
     name = Column(String, nullable=False)
     email = Column(String, nullable=False, unique=True)
     phone = Column(String, nullable=False, unique=True)
+    title = Column(String, nullable=True)  # Job title
+    
+    # Location
+    city = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    timezone = Column(String, default="UTC")
     
     # Basic info
     client_type = Column(String, nullable=True)
@@ -70,9 +78,9 @@ class Lead(BaseModel):
     
     # Extra
     extra_data = Column(JSON, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
+    organization = relationship("Organization", back_populates="leads")
     conversations = relationship("Conversation", back_populates="lead", cascade="all, delete-orphan")
     followups = relationship("FollowUp", back_populates="lead", cascade="all, delete-orphan")
     handoffs = relationship("HandoffQueue", back_populates="lead", cascade="all, delete-orphan")
@@ -188,6 +196,126 @@ class User(BaseModel):
 # ============================================================================
 # NEW TABLES
 # ============================================================================
+
+class Organization(BaseModel):
+    """Companies/Organizations"""
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Basic info
+    name = Column(String, nullable=False, unique=True, index=True)
+    domain = Column(String, nullable=True, unique=True)  # company.com
+    industry = Column(String, nullable=True)
+    size = Column(String, nullable=True)  # 1-10/11-50/51-200/201-500/500+
+    
+    # Contact
+    primary_email = Column(String, nullable=True)
+    primary_phone = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    
+    # Address
+    address_line1 = Column(String, nullable=True)
+    address_line2 = Column(String, nullable=True)
+    city = Column(String, nullable=True, index=True)
+    state = Column(String, nullable=True)
+    country = Column(String, nullable=True, index=True)
+    postal_code = Column(String, nullable=True)
+    timezone = Column(String, default="UTC")
+    
+    # Business details
+    annual_revenue = Column(Float, nullable=True)
+    employee_count = Column(Integer, nullable=True)
+    
+    # CRM
+    account_owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    status = Column(String, default="active")  # active/inactive/prospect
+    
+    # Metadata
+    extra_data = Column(JSON, nullable=True)
+    
+    # Relationships
+    account_owner = relationship("User")
+    leads = relationship("Lead", back_populates="organization")
+    clients = relationship("Client", back_populates="organization")
+
+
+class Client(BaseModel):
+    """Onboarded customers (converted from leads)"""
+    __tablename__ = "clients"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True)  # Login account
+    
+    # Contact (from User)
+    whatsapp_number = Column(String, nullable=True)  # Can differ from phone
+    
+    # Location
+    city = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    timezone = Column(String, default="UTC")
+    
+    # Contract
+    contract_start = Column(DateTime, nullable=True)
+    contract_end = Column(DateTime, nullable=True)
+    plan_type = Column(String, nullable=True)
+    mrr = Column(Float, default=0.0)
+    
+    # Status
+    status = Column(String, default="active")
+    health_score = Column(Integer, default=100)
+    
+    # Account team
+    account_manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    # Onboarding
+    onboarded_at = Column(DateTime, nullable=True)
+    onboarding_completed = Column(Boolean, default=False)
+    
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+    original_lead = relationship("Lead", foreign_keys=[lead_id])
+    organization = relationship("Organization", back_populates="clients")
+    account_manager = relationship("User", foreign_keys=[account_manager_id])
+    support_tickets = relationship("SupportTicket", back_populates="client")
+
+
+class SupportTicket(BaseModel):
+    """Support tickets for clients"""
+    __tablename__ = "support_tickets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"))
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=True)
+    
+    # Ticket details
+    ticket_number = Column(String, unique=True, nullable=False, index=True)
+    subject = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    
+    # Classification
+    category = Column(String, nullable=True)  # technical/billing/feature_request
+    priority = Column(String, default="medium")  # low/medium/high/urgent
+    status = Column(String, default="open")  # open/in_progress/resolved/closed
+    
+    # Assignment
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
+    
+    # Resolution
+    resolution_notes = Column(Text, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
+    first_response_at = Column(DateTime, nullable=True)
+    
+    # SLA tracking
+    due_date = Column(DateTime, nullable=True)
+    sla_breached = Column(Boolean, default=False)
+    
+    # Relationships
+    client = relationship("Client", back_populates="support_tickets")
+    assigned_user = relationship("User")
+
 
 class EmailMessage(BaseModel):
     __tablename__ = "email_messages"

@@ -8,6 +8,7 @@ BASE_URL=https://yourdomain.com  # CRITICAL
 # Database
 DATABASE_URL=sqlite+aiosqlite:///./mydatabase.db
 
+
 # Company Info
 COMPANY_NAME=TechCorp
 SUPPORT_NUMBER=+1-800-TECHCORP
