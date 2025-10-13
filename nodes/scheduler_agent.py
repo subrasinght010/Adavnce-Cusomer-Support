@@ -10,7 +10,7 @@ from typing import Optional
 from dateutil import parser
 
 from nodes.core.base_node import BaseNode
-from state.optimized_workflow_state import OptimizedWorkflowState
+from state.workflow_state import OptimizedWorkflowState
 from database.crud import DBManager
 from database.db import get_db
 

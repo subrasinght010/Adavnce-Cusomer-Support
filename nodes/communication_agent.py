@@ -3,12 +3,10 @@
 Parallel Execution Agents - UPDATED for Inbound/Outbound
 """
 
-import asyncio
-import logging
-from typing import Dict, Any
+from typing import Dict
 
 from nodes.core.base_node import BaseNode
-from state.optimized_workflow_state import OptimizedWorkflowState, ChannelType, DirectionType
+from state.workflow_state import OptimizedWorkflowState, ChannelType
 
 # Services
 from services.email_service import send_email

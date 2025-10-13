@@ -8,7 +8,7 @@ import numpy as np
 from collections import deque
 from scipy import signal
 from config.settings import settings as config
-from state.optimized_workflow_state import OptimizedWorkflowState
+from state.workflow_state import OptimizedWorkflowState
 from tools.stt import transcribe_with_faster_whisper
 # Import nodes
 from nodes.optimized_incoming_listener import incoming_listener_node

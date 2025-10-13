@@ -14,7 +14,7 @@ from database.db import AsyncSessionLocal
 from utils.context_builder import ContextBuilder
 from nodes.unified_intelligence_agent import UnifiedIntelligenceAgent
 from services.email_service import send_email
-from state.optimized_workflow_state import OptimizedWorkflowState
+from state.workflow_state import OptimizedWorkflowState
 import os
 
 

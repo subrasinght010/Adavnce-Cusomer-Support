@@ -10,7 +10,7 @@ from database.db import AsyncSessionLocal
 from utils.context_builder import ContextBuilder
 from nodes.unified_intelligence_agent import UnifiedIntelligenceAgent
 from services.sms_service import send_sms
-from state.optimized_workflow_state import OptimizedWorkflowState
+from state.workflow_state import OptimizedWorkflowState
 
 
 class SMSHandler:

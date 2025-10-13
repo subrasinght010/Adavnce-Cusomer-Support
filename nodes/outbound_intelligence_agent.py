@@ -10,7 +10,7 @@ from langchain_core.prompts import PromptTemplate
 
 from nodes.core.base_node import BaseNode
 from nodes.core.intelligence_models import IntelligenceOutput
-from state.optimized_workflow_state import OptimizedWorkflowState, extract_quick_fields
+from state.workflow_state import OptimizedWorkflowState, extract_quick_fields
 from tools.language_model import LanguageModel
 from database.crud import DBManager
 from database.db import get_db
