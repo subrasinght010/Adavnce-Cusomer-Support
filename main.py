@@ -20,8 +20,7 @@ from fastapi import (
 from fastapi.responses import (
     JSONResponse, 
     RedirectResponse, 
-    HTMLResponse,
-    Response  # ✅ Moved here from inside functions
+    HTMLResponse  # ✅ Moved here from inside functions
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -48,7 +47,7 @@ from utils.audio import (
 from utils.secure import verify_password, hash_password
 
 from router.twilio_call import router as twilio_router
-
+from router.webhooks import router as webhook_router
 # Workers
 from workers import worker_manager
 
@@ -124,6 +123,7 @@ templates = Jinja2Templates(directory="frontend/templates")
 
 # Include routers
 app.include_router(twilio_router, prefix="/webhook/twilio")
+app.include_router(webhook_router, prefix="/webhook/massage")
 
 # CORS middleware
 app.add_middleware(
@@ -191,67 +191,61 @@ async def require_auth(request: Request):
 async def root(request: Request):
     """
     Root redirect logic:
-    - Redirects to /voice if TTS is enabled
-    - Redirects to /home if TTS is disabled
+    - Redirects to /home (single entrypoint)
+    - /home decides which template to load (voice or index)
     """
     token = request.cookies.get("access_token")
     if not token:
         return RedirectResponse(url="/login", status_code=303)
-    
+
     try:
         verify_jwt_token(token)
-    except HTTPException:
+    except Exception:
         print("❌ Invalid token, redirecting to login")
         return RedirectResponse(url="/login", status_code=303)
-        
+
+    # Always redirect to /home now
+    return RedirectResponse(url="/home", status_code=303)
+
+@app.get("/home", response_class=HTMLResponse)
+async def unified_home(
+    request: Request,
+    user=Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Unified Home Page:
+    - If TTS enabled → load voice.html
+    - If TTS disabled → load index.html
+    """
+    if isinstance(user, RedirectResponse):
+        return user
+
+    db_manager = DBManager(session=db)
+    user_obj = await db_manager.get_user_by_username(username=user)
+
+    if not user_obj:
+        return HTMLResponse("User not found", status_code=404)
+
     try:
         if Settings.ENABLE_TTS in [False, "False", "false"]:
-            print("⚠️  TTS is disabled, redirecting to home")
-            return RedirectResponse(url="/home", status_code=303)
+            print("⚠️  TTS disabled → loading index.html")
+            template_name = "index.html"
         else:
-            print("✅ TTS is enabled, redirecting to voice chat")
-            return RedirectResponse(url="/voice", status_code=303)
+            print("✅ TTS enabled → loading voice.html")
+            template_name = "voice.html"
     except Exception as e:
         print(f"❌ Error checking TTS setting: {e}")
         return RedirectResponse(url="/login", status_code=303)
 
-
-@app.get("/voice", response_class=HTMLResponse)
-async def home_page(
-    request: Request,
-    user=Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-):
-    if isinstance(user, RedirectResponse):
-        return user
-
-    user_obj = await DBManager(session=db).get_user_by_username(username=user)
-    if not user_obj:
-        return HTMLResponse("User not found", status_code=404)
-
     return templates.TemplateResponse(
-        "voice.html",
-        {"request": request, "user_id": user_obj.id, "username": user_obj.username},
+        template_name,
+        {
+            "request": request,
+            "user_id": user_obj.id,
+            "username": user_obj.username,
+        },
     )
-
-@app.get("/home", response_class=HTMLResponse)
-async def home_page(
-    request: Request,
-    user=Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
-):
-    if isinstance(user, RedirectResponse):
-        return user
-
-    user_obj = await DBManager(session=db).get_user_by_username(username=user)
-    if not user_obj:
-        return HTMLResponse("User not found", status_code=404)
-
-    return templates.TemplateResponse(
-        "index.html",
-        {"request": request, "user_id": user_obj.id, "username": user_obj.username},
-    )
-
 
 @app.get("/login")
 async def login_page(request: Request):
@@ -340,106 +334,6 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "service": "Multi-Agent Communication System"
     }
-
-
-# -------------------------
-# SMS Webhook
-# -------------------------
-@app.post("/webhook/sms")
-async def webhook_sms(request: Request):
-    """
-    Twilio SMS webhook endpoint
-    Configure in Twilio Console: https://yourserver.com/webhook/sms
-    """
-    try:
-        form_data = await request.form()
-        webhook_data = {
-            'From': form_data.get('From'),
-            'To': form_data.get('To'),
-            'Body': form_data.get('Body'),
-            'MessageSid': form_data.get('MessageSid')
-        }
-        
-        print(f"📱 SMS Webhook received: {webhook_data}")
-        
-        # Process SMS
-        result = await sms_handler.handle_incoming_sms(webhook_data)
-        
-        # Return TwiML response (required by Twilio)
-        return Response(
-            content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-            media_type="application/xml"
-        )
-        
-    except Exception as e:
-        print(f"❌ SMS webhook error: {e}")
-        import traceback
-        traceback.print_exc()
-        return Response(
-            content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-            media_type="application/xml",
-            status_code=200
-        )
-
-
-# -------------------------
-# WhatsApp Webhook
-# -------------------------
-@app.post("/webhook/whatsapp")
-async def webhook_whatsapp(request: Request):
-    """
-    Twilio WhatsApp webhook endpoint
-    Configure in Twilio Console: https://yourserver.com/webhook/whatsapp
-    """
-    try:
-        form_data = await request.form()
-        webhook_data = {
-            'From': form_data.get('From'),
-            'To': form_data.get('To'),
-            'Body': form_data.get('Body'),
-            'MessageSid': form_data.get('MessageSid'),
-            'MediaUrl0': form_data.get('MediaUrl0'),
-            'NumMedia': form_data.get('NumMedia', '0')
-        }
-        
-        print(f"💬 WhatsApp Webhook received: {webhook_data}")
-        
-        # Process WhatsApp
-        result = await whatsapp_handler.handle_incoming_whatsapp(webhook_data)
-        
-        # Return TwiML response
-        return Response(
-            content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-            media_type="application/xml"
-        )
-        
-    except Exception as e:
-        print(f"❌ WhatsApp webhook error: {e}")
-        import traceback
-        traceback.print_exc()
-        return Response(
-            content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
-            media_type="application/xml",
-            status_code=200
-        )
-
-
-# -------------------------
-# Webhook Status Check
-# -------------------------
-@app.get("/webhook/status")
-async def webhook_status():
-    """Check if webhooks are working"""
-    return {
-        "status": "online",
-        "endpoints": {
-            "sms": "/webhook/sms",
-            "whatsapp": "/webhook/whatsapp",
-            "twilio_voice": "/webhook/twilio/voice/*"
-        },
-        "timestamp": datetime.now().isoformat()
-    }
-
 
 # -------------------------
 # WebSocket Helper

@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime
 from typing import Dict
 
-from workers.base_worker import BaseWorker
+from workers.base import BaseWorker
 from database.crud import DBManager
 from database.models import FollowUp
 from database.db import AsyncSessionLocal

@@ -20,10 +20,8 @@ class WorkerManager:
         if self._initialized:
             return
         
-        # Import and register all workers
+        # Import and register workers (email via webhook, followup in LeadManager)
         worker_modules = [
-            ('email', 'workers.email_worker', 'email_worker'),
-            ('followup', 'workers.followup_worker', 'followup_worker'),
             ('execute_call', 'workers.execute_call_worker', 'execute_call_worker')
         ]
         
