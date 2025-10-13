@@ -229,31 +229,31 @@ class InboundIntelligenceAgent(BaseNode):
         # Build context with history
         context = f"""You are an AI support agent. Answer the user's question.
 
-Conversation History:
-{history_text}
+        Conversation History:
+        {history_text}
 
-Current Message:
-User: {user_message}
-Lead: {state.get('lead_data',{}).get('name', 'Unknown')} (ID: {lead_id})
-Channel: {state.get('channel')}
+        Current Message:
+        User: {user_message}
+        Lead: {state.get('lead_data',{}).get('name', 'Unknown')} (ID: {lead_id})
+        Channel: {state.get('channel')}
 
-Available tools:
-{self._format_tools()}
+        Available tools:
+        {self._format_tools()}
 
-If you need a tool, respond EXACTLY like this:
-Action: tool_name
-Action Input: your input here
+        If you need a tool, respond EXACTLY like this:
+        Action: tool_name
+        Action Input: your input here
 
-Otherwise, respond with ONLY this JSON (nothing else):
-{{"intent": "product_query|callback_request|send_details_email|send_details_sms|send_details_whatsapp|complaint|escalation|general_inquiry", "intent_confidence": 0.9, "entities": {{"callback_time": "2024-10-14T10:00:00", "channel": "email", "email": "user@example.com", "phone": "+911234567890", "content_type": "pricing"}}, "sentiment": "positive", "urgency": "medium", "response_text": "your answer here", "needs_clarification": false, "next_actions": ["schedule_callback", "send_email"], "requires_human": false}}
+        Otherwise, respond with ONLY this JSON (nothing else):
+        {{"intent": "product_query|callback_request|send_details_email|send_details_sms|send_details_whatsapp|complaint|escalation|general_inquiry", "intent_confidence": 0.9, "entities": {{"callback_time": "2024-10-14T10:00:00", "channel": "email", "email": "user@example.com", "phone": "+911234567890", "content_type": "pricing"}}, "sentiment": "positive", "urgency": "medium", "response_text": "your answer here", "needs_clarification": false, "next_actions": ["schedule_callback", "send_email"], "requires_human": false}}
 
-Extract entities when user mentions:
-- Callback time/date
-- Email/SMS/WhatsApp preference
-- Contact details
-- Content type (pricing/product/catalog)
+        Extract entities when user mentions:
+        - Callback time/date
+        - Email/SMS/WhatsApp preference
+        - Contact details
+        - Content type (pricing/product/catalog)
 
-Your response:"""
+        Your response:"""
         
         try:
             # Manual ReAct loop

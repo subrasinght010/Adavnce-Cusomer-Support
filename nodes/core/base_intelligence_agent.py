@@ -30,16 +30,19 @@ class BaseIntelligenceAgent(BaseNode):
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
         """Main execution with ReAct loop"""
         user_message = state.get('current_message')
+        self.logger.info(f"Executing agent for message: {user_message[:50]}...")
         
         # Build context
         context = self._build_context(state)
+        self.logger.debug("Context built successfully")
         
         # ReAct loop
         try:
             intelligence = await self._react_loop(context, max_iterations=3)
             intelligence = self._post_process(intelligence, user_message, state)
+            self.logger.info(f"Generated response - Intent: {intelligence.intent}, Confidence: {intelligence.intent_confidence}")
         except Exception as e:
-            self.logger.error(f"Agent failed: {e}")
+            self.logger.error(f"Agent execution failed: {e}", exc_info=True)
             intelligence = self._fallback()
         
         # Update state
@@ -57,13 +60,18 @@ class BaseIntelligenceAgent(BaseNode):
     
     async def _react_loop(self, context: str, max_iterations: int) -> IntelligenceOutput:
         """ReAct reasoning loop"""
+        self.logger.info(f"Starting ReAct loop (max {max_iterations} iterations)")
         scratchpad = ""
         
-        for _ in range(max_iterations):
+        for iteration in range(max_iterations):
+            self.logger.debug(f"Iteration {iteration + 1}/{max_iterations}")
+            
             response = await self._llm_call(context + scratchpad)
+            self.logger.debug(f"LLM response: {response[:200]}...")
             
             # Check for answer
             if "Final Answer:" in response or ("{" in response and "intent" in response):
+                self.logger.info("Found final answer")
                 answer = response.split("Final Answer:")[1] if "Final Answer:" in response else response
                 return self._parse(answer)
             
@@ -72,16 +80,21 @@ class BaseIntelligenceAgent(BaseNode):
                 action = self._extract_action(response)
                 if action:
                     tool_name, tool_input = action
+                    self.logger.info(f"Executing tool: {tool_name} with input: {tool_input[:50]}...")
                     observation = self._execute_tool(tool_name, tool_input)
+                    self.logger.info(f"Tool result: {observation[:100]}...")
                     scratchpad += f"\nAction: {tool_name}\nAction Input: {tool_input}\nObservation: {observation}\n"
                     continue
             
+            self.logger.info("No tool action found, parsing as final answer")
             return self._parse(response)
         
+        self.logger.warning("Max iterations reached, using fallback")
         return self._fallback()
     
     def _post_process(self, intelligence: IntelligenceOutput, user_message: str, state: dict) -> IntelligenceOutput:
         """Post-processing hooks"""
+        self.logger.debug("Running post-processing validation")
         intelligence = self._validate_entities(intelligence, user_message)
         intelligence = self._apply_response_template(intelligence, state)
         return intelligence
@@ -96,11 +109,13 @@ class BaseIntelligenceAgent(BaseNode):
     
     def _update_state(self, state: dict, user_message: str, intelligence: IntelligenceOutput) -> dict:
         """Update conversation state"""
+        self.logger.debug("Updating conversation state")
         state["conversation_history"].append({"role": "user", "content": user_message, "timestamp": datetime.utcnow().isoformat()})
         state["intelligence_output"] = intelligence.dict()
         state = extract_quick_fields(state)
         state["llm_calls_made"] = state.get("llm_calls_made", 0) + 1
         state["conversation_history"].append({"role": "assistant", "content": intelligence.response_text, "timestamp": datetime.utcnow().isoformat()})
+        self.logger.info(f"State updated - Conversation history: {len(state['conversation_history'])} messages")
         return state
     
     # Utility methods
@@ -131,9 +146,12 @@ class BaseIntelligenceAgent(BaseNode):
         for tool in self.tools:
             if tool.name == tool_name:
                 try:
-                    return tool.func(tool_input)
+                    result = tool.func(tool_input)
+                    return result
                 except Exception as e:
+                    self.logger.error(f"Tool {tool_name} failed: {e}", exc_info=True)
                     return f"Tool error: {e}"
+        self.logger.warning(f"Tool not found: {tool_name}")
         return f"Tool '{tool_name}' not found"
     
     def _parse(self, text: str) -> IntelligenceOutput:
@@ -152,13 +170,11 @@ class BaseIntelligenceAgent(BaseNode):
             cleaned = ''.join(char for char in cleaned if ord(char) >= 32 or char in '\n\r\t')
             data = json.loads(cleaned)
             
-            # Fix defaults
             if 'intent' not in data:
                 data['intent'] = 'general_inquiry'
             if 'response_text' not in data:
                 data['response_text'] = data.get('message', 'How can I help?')
             
-            # FIX: Clean next_actions if malformed
             if 'next_actions' in data:
                 actions = data['next_actions']
                 if isinstance(actions, list):
@@ -167,9 +183,10 @@ class BaseIntelligenceAgent(BaseNode):
                         for a in actions
                     ]
             
+            self.logger.debug(f"Parsed intent: {data.get('intent')}")
             return IntelligenceOutput(**data)
         except Exception as e:
-            self.logger.warning(f"Parse failed: {e}")
+            self.logger.warning(f"Parse failed: {e}, using fallback")
             return self._fallback()
     
     def _fallback(self) -> IntelligenceOutput:

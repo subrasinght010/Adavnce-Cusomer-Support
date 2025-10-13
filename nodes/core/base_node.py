@@ -5,22 +5,18 @@ All your nodes should inherit from this class
 """
 
 import asyncio
+import os
 import time
-import logging
+import sys
 from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 from datetime import datetime
 import functools
 import inspect
-
+sys.path.append(os.getcwd())  # Fixed - use getcwd() not chdir
+from utils.logger_wrapper import setup_logger
 # Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-
+logger = setup_logger(name="BaseNode")
 class BaseNode(ABC):
     """
     Base class for all workflow nodes
@@ -41,7 +37,7 @@ class BaseNode(ABC):
     
     def __init__(self, name: str):
         self.name = name
-        self.logger = logging.getLogger(f"node.{name}")
+        self.logger = logger
         self.metrics = {
             "total_executions": 0,
             "successful_executions": 0,

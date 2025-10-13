@@ -16,6 +16,7 @@ class InboundAgent(BaseIntelligenceAgent):
         super().__init__("inbound_intelligence", llm)
     
     def _create_tools(self):
+        self.logger.info("Initializing 6 tools for inbound agent")
         return [
             Tool(name="search_knowledge_base", description="Search KB for product/policy info. Input: query", func=self._search_kb),
             Tool(name="get_lead_history", description="Get past conversations. Input: lead_id", func=self._get_history),
@@ -38,71 +39,72 @@ class InboundAgent(BaseIntelligenceAgent):
     
     def _validate_entities(self, intelligence: IntelligenceOutput, user_message: str) -> IntelligenceOutput:
         """Validate and clear hallucinated entities"""
+        self.logger.debug("Validating entities")
         entities = intelligence.entities or {}
         
-        # Callback without time
         if 'callback' in intelligence.intent.lower():
             time_keywords = ['at', 'pm', 'am', ':00']
             if not any(k in user_message.lower() for k in time_keywords) and entities.get('callback_time'):
+                self.logger.info("Callback time not specified in message, requesting clarification")
                 entities['callback_time'] = None
                 intelligence.needs_clarification = True
                 intelligence.clarification_question = "What time works best?"
                 intelligence.response_text = "What time works best for your callback?"
                 intelligence.next_actions = []
         
-        # Email without address
         if 'email' in intelligence.intent.lower() and entities.get('email') and '@' not in user_message:
+            self.logger.debug("Email not in message, clearing hallucinated email")
             entities['email'] = None
         
-        # Phone without digits
         if entities.get('phone') and not any(c.isdigit() for c in user_message):
+            self.logger.debug("Phone not in message, clearing hallucinated phone")
             entities['phone'] = None
         
         intelligence.entities = entities
         return intelligence
     
     def _apply_response_template(self, intelligence: IntelligenceOutput, state: dict) -> IntelligenceOutput:
-        """Apply response templates - safe entity access"""
+        """Apply response templates"""
+        self.logger.debug(f"Applying template for intent: {intelligence.intent}")
         try:
             intent = intelligence.intent.lower()
             entities = intelligence.entities or {}
             lead = state.get('lead_data', {})
             
-            # Callback
             if 'callback' in intent:
                 if entities.get('callback_time'):
                     intelligence.response_text = get_response('callback_scheduled', 
                         time=entities['callback_time'], name=lead.get('name', 'Our team'), phone=lead.get('phone', 'your number'))
                 else:
                     intelligence.response_text = get_response('callback_need_time')
-            
-            # Email
             elif 'email' in intent:
                 if entities.get('email'):
                     intelligence.response_text = get_response('email_sent', 
                         content_type=entities.get('content_type', 'info'), email=entities['email'])
                 else:
                     intelligence.response_text = get_response('email_need_address')
-            
-            # Clarification
             elif intelligence.needs_clarification:
                 intelligence.response_text = get_response('clarification', 
                     question=intelligence.clarification_question or 'what you need')
-        
         except Exception as e:
-            self.logger.error(f"Template error: {e}")
+            self.logger.error(f"Template error: {e}", exc_info=True)
         
         return intelligence
     
     # Tool implementations
     def _search_kb(self, query: str) -> str:
+        self.logger.info(f"Searching KB: {query[:50]}...")
         try:
             results = query_knowledge_base(query=query, top_k=3)
-            return "\n".join([f"[{r.get('metadata',{}).get('source')}]: {r.get('content')}" for r in results]) if results else "No results"
+            result_text = "\n".join([f"[{r.get('metadata',{}).get('source')}]: {r.get('content')}" for r in results]) if results else "No results"
+            self.logger.info(f"KB search returned {len(results) if results else 0} results")
+            return result_text
         except Exception as e:
+            self.logger.error(f"KB search error: {e}")
             return f"Error: {e}"
     
     def _get_history(self, lead_id: str) -> str:
+        self.logger.info(f"Fetching history for lead: {lead_id}")
         import asyncio
         try:
             loop = asyncio.new_event_loop()
@@ -110,7 +112,8 @@ class InboundAgent(BaseIntelligenceAgent):
             result = loop.run_until_complete(self._fetch_history(lead_id))
             loop.close()
             return result
-        except:
+        except Exception as e:
+            self.logger.error(f"History fetch failed: {e}")
             return "No history"
     
     async def _fetch_history(self, lead_id: str) -> str:
@@ -118,28 +121,36 @@ class InboundAgent(BaseIntelligenceAgent):
             async with get_db() as db:
                 mgr = DBManager(db)
                 convos = await mgr.get_lead_conversations(lead_id, limit=5)
+                self.logger.info(f"Retrieved {len(convos) if convos else 0} past conversations")
                 return "\n".join([f"{c.sender}: {c.message}" for c in convos]) if convos else "No history"
-        except:
+        except Exception as e:
+            self.logger.error(f"DB error: {e}")
             return "Error"
     
     def _check_ticket(self, ticket_id: str) -> str:
+        self.logger.info(f"Checking ticket: {ticket_id}")
         return f"Ticket {ticket_id}: No open tickets"
     
     def _schedule_callback(self, input_str: str) -> str:
+        self.logger.info(f"Scheduling callback: {input_str}")
         parts = input_str.split('|')
         if len(parts) < 2 or not parts[1]:
+            self.logger.warning("Callback time missing")
             return "ERROR: Time required"
-        self.logger.info(f"Callback: {input_str}")
+        self.logger.info(f"Callback scheduled for {parts[1]}")
         return f"Callback scheduled for {parts[1]}"
     
     def _send_details(self, input_str: str) -> str:
+        self.logger.info(f"Sending details: {input_str}")
         parts = input_str.split('|')
         if len(parts) < 3:
+            self.logger.warning("Missing channel or content type")
             return "ERROR: Missing channel/content"
-        self.logger.info(f"Send: {input_str}")
+        self.logger.info(f"Details sent: {parts[2]} via {parts[1]}")
         return f"{parts[2]} sent via {parts[1]}"
     
     def _escalate(self, reason: str) -> str:
+        self.logger.warning(f"Escalating to human: {reason}")
         return f"Escalated: {reason}"
 
 
