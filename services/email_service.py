@@ -1,5 +1,6 @@
+# services/email_service.py
 """
-Email Service - SendGrid/SMTP
+Email Service - SendGrid with Thread Support
 """
 
 import os
@@ -11,16 +12,20 @@ async def send_email(
     to: str,
     subject: str,
     body: str,
-    from_email: Optional[str] = None
+    from_email: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    reply_to_message_id: Optional[str] = None
 ) -> bool:
     """
-    Send email using SendGrid
+    Send email using SendGrid with threading support
     
     Args:
         to: Recipient email
         subject: Email subject
         body: HTML body content
         from_email: Sender email (optional)
+        thread_id: Email thread ID for threading
+        reply_to_message_id: Message ID to reply to
     """
     try:
         from_email = from_email or os.getenv("FROM_EMAIL", "support@techcorp.com")
@@ -31,6 +36,19 @@ async def send_email(
             subject=subject,
             html_content=Content("text/html", body)
         )
+        
+        # Add threading headers
+        if reply_to_message_id:
+            message.reply_to = reply_to_message_id
+            # Add custom headers for threading
+            message.custom_args = {
+                "In-Reply-To": reply_to_message_id
+            }
+        
+        if thread_id:
+            if not message.custom_args:
+                message.custom_args = {}
+            message.custom_args["References"] = thread_id
         
         sg = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
         response = sg.send(message)

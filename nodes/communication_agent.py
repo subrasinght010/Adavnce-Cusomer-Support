@@ -1,19 +1,18 @@
-# nodes/parallel_execution_agents.py
+# nodes/communication_agent.py
 """
-Parallel Execution Agents - UPDATED for Inbound/Outbound
+Communication Agent - Updated to use formatted messages
 """
 
 from typing import Dict
-
 from nodes.core.base_node import BaseNode
 from state.workflow_state import OptimizedWorkflowState, ChannelType
-
-# Services
 from services.email_service import send_email
 from services.sms_service import send_sms
 from services.whatsapp_service import send_whatsapp
+
+
 class CommunicationAgent(BaseNode):
-    """Send messages via any channel"""
+    """Send messages via any channel using formatted content"""
     
     def __init__(self):
         super().__init__("communication_agent")
@@ -22,6 +21,7 @@ class CommunicationAgent(BaseNode):
         """Send communication via channel"""
         
         intelligence = state.get("intelligence_output", {})
+        formatted_msg = intelligence.get("formatted_message", {})
         response_text = intelligence.get("response_text", "")
         
         if not response_text:
@@ -35,7 +35,12 @@ class CommunicationAgent(BaseNode):
         self.logger.info(f"[{direction}] Sending via {channel}")
         
         try:
-            success = await self._send_message(channel, lead_data, response_text)
+            # Use formatted message if available
+            success = await self._send_message(
+                channel, 
+                lead_data, 
+                formatted_msg if formatted_msg else {"text": response_text}
+            )
             
             if success:
                 state["communication_sent"] = True
@@ -52,8 +57,13 @@ class CommunicationAgent(BaseNode):
         
         return state
     
-    async def _send_message(self, channel: ChannelType, lead_data: Dict, message: str) -> bool:
-        """Route to correct service - FIXED: Normalize channel type"""
+    async def _send_message(
+        self, 
+        channel: ChannelType, 
+        lead_data: Dict, 
+        formatted_msg: Dict
+    ) -> bool:
+        """Route to correct service with formatted content"""
         
         # Normalize to enum if string
         if isinstance(channel, str):
@@ -64,51 +74,81 @@ class CommunicationAgent(BaseNode):
                 return False
         
         if channel == ChannelType.EMAIL:
-            return await self._send_email(lead_data, message)
+            return await self._send_email(lead_data, formatted_msg)
         elif channel == ChannelType.SMS:
-            return await self._send_sms(lead_data, message)
+            return await self._send_sms(lead_data, formatted_msg)
         elif channel == ChannelType.WHATSAPP:
-            return await self._send_whatsapp(lead_data, message)
+            return await self._send_whatsapp(lead_data, formatted_msg)
         elif channel == ChannelType.CALL:
             return True
         else:
             self.logger.error(f"Unknown channel: {channel}")
             return False
-        
-    async def _send_email(self, lead_data: Dict, message: str) -> bool:
+    
+    async def _send_email(self, lead_data: Dict, formatted_msg: Dict) -> bool:
+        """Send formatted email with thread support"""
         email = lead_data.get("email")
         if not email:
+            self.logger.error("No email address")
             return False
         
         try:
-            result = await send_email(to_email=email, subject="Response", body=message)
-            return result.get("success", False) if isinstance(result, dict) else bool(result)
+            # Use formatted email fields
+            subject = formatted_msg.get("subject", "Message from TechCorp")
+            body = formatted_msg.get("body_html") or formatted_msg.get("body_text") or formatted_msg.get("text")
+            
+            # Thread support
+            thread_id = formatted_msg.get("thread_id")
+            reply_to_id = formatted_msg.get("reply_to_message_id")
+            
+            result = await send_email(
+                to=email,
+                subject=subject,
+                body=body,
+                thread_id=thread_id,
+                reply_to_message_id=reply_to_id
+            )
+            
+            return result if isinstance(result, bool) else result.get("success", False)
+            
         except Exception as e:
             self.logger.error(f"Email send failed: {e}")
             return False
     
-    async def _send_sms(self, lead_data: Dict, message: str) -> bool:
+    async def _send_sms(self, lead_data: Dict, formatted_msg: Dict) -> bool:
+        """Send formatted SMS"""
         phone = lead_data.get("phone")
         if not phone:
+            self.logger.error("No phone number")
             return False
         
         try:
+            # SMS is pre-formatted with length limit
+            message = formatted_msg.get("text", "")
+            
             result = await send_sms(to_phone=phone, message=message)
-            return result.get("success", False) if isinstance(result, dict) else bool(result)
+            return result if isinstance(result, bool) else result.get("success", False)
+            
         except Exception as e:
             self.logger.error(f"SMS send failed: {e}")
             return False
     
-    async def _send_whatsapp(self, lead_data: Dict, message: str) -> bool:
+    async def _send_whatsapp(self, lead_data: Dict, formatted_msg: Dict) -> bool:
+        """Send formatted WhatsApp message"""
         phone = lead_data.get("phone")
         if not phone:
+            self.logger.error("No phone number")
             return False
         
         try:
+            message = formatted_msg.get("text", "")
+            
             result = await send_whatsapp(to_phone=phone, message=message)
-            return result.get("success", False) if isinstance(result, dict) else bool(result)
+            return result if isinstance(result, bool) else result.get("success", False)
+            
         except Exception as e:
             self.logger.error(f"WhatsApp send failed: {e}")
             return False
+
 
 communication_agent = CommunicationAgent()

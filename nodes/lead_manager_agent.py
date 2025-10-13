@@ -368,43 +368,134 @@ class LeadManagerAgent:
                 sequence.append("email")
         
         return sequence
-    
+
     async def _process_follow_ups(self):
-        """Handle follow-up scheduling for existing leads"""
+        """
+        Enhanced follow-up processing with:
+        - Channel progression
+        - Max attempts tracking
+        - Auto-scheduling next follow-up
+        """
         
         try:
             async with get_db() as db:
                 db_manager = DBManager(db)
                 
-                # Get leads that need follow-up
+                # Get due follow-ups
                 due_followups = await db_manager.get_due_followups()
                 
                 for followup in due_followups:
-                    # Create new outbound task
                     lead = await db_manager.get_lead(followup.lead_id)
                     
-                    if lead:
-                        lead_dict = {
-                            "lead_id": lead.id,
+                    if not lead:
+                        continue
+                    
+                    # Check max attempts
+                    if lead.attempt_count >= 3:
+                        logger.warning(f"Max attempts reached for lead {lead.id}")
+                        await db_manager.update_followup_status(followup.id, "max_attempts")
+                        continue
+                    
+                    # Create outbound state (workflow handles message generation)
+                    from state.workflow_state import create_initial_state
+                    from graph_workflows.workflow import workflow_router
+                    
+                    state = create_initial_state(
+                        lead_id=str(lead.id),
+                        message="",  # Intelligence agent generates
+                        channel=followup.channel,
+                        direction="outbound",
+                        call_type="follow_up",
+                        lead_data={
                             "name": lead.name,
                             "email": lead.email,
                             "phone": lead.phone,
-                            "company": lead.company,
-                            "call_type": CallType.FOLLOW_UP,
-                            "client_type": ClientType.RETURNING,
-                            "approved_for_contact": True,  # Follow-ups auto-approved
-                            "attempt_count": lead.attempt_count
+                            "company": lead.company
                         }
+                    )
+                    
+                    # Run through workflow (Intelligence → Format → Send)
+                    result = await workflow_router.run(state)
+                    
+                    # Check if sent successfully
+                    if result.get("communication_sent"):
+                        # Update followup status
+                        await db_manager.update_followup_status(followup.id, "sent")
                         
-                        await self._schedule_lead(lead_dict)
+                        # Increment attempt count
+                        await db_manager.update_lead(lead.id, {
+                            "attempt_count": lead.attempt_count + 1,
+                            "last_contacted_at": datetime.utcnow()
+                        })
                         
-                        # Mark followup as executed
-                        await db_manager.update_followup_status(followup.id, "executed")
+                        # Schedule next follow-up if not max attempts
+                        if lead.attempt_count + 1 < 3:
+                            await self._schedule_next_followup(lead, followup)
+                        
+                        logger.info(f"✓ Follow-up sent to lead {lead.id} via {followup.channel}")
+                    else:
+                        await db_manager.update_followup_status(followup.id, "failed")
                 
                 logger.info(f"Processed {len(due_followups)} follow-ups")
         
         except Exception as e:
             logger.error(f"Follow-up processing failed: {e}")
+    
+    async def _schedule_next_followup(self, lead, current_followup):
+        """Schedule next follow-up with channel progression"""
+        
+        # Channel progression: email → sms → whatsapp
+        channel_map = {
+            "email": "sms",
+            "sms": "whatsapp",
+            "whatsapp": "email"
+        }
+        
+        # Delay progression: 24h → 48h → 72h
+        delay_map = {
+            "email": timedelta(hours=24),
+            "sms": timedelta(hours=48),
+            "whatsapp": timedelta(hours=72)
+        }
+        
+        next_channel = channel_map.get(current_followup.channel, "email")
+        delay = delay_map.get(current_followup.channel, timedelta(hours=24))
+        next_time = datetime.utcnow() + delay
+        
+        async with get_db() as db:
+            db_manager = DBManager(db)
+            await db_manager.create_followup(
+                lead_id=lead.id,
+                scheduled_time=next_time,
+                followup_type="reminder",
+                channel=next_channel
+            )
+        
+        logger.info(f"Scheduled next follow-up: {next_channel} at {next_time}")
+    
+    async def create_manual_followup(
+        self,
+        lead_id: int,
+        hours_delay: int = 24,
+        followup_type: str = "reminder",
+        channel: str = "email"
+    ):
+        """Manually create a follow-up (for API/dashboard use)"""
+        
+        async with get_db() as db:
+            db_manager = DBManager(db)
+            
+            scheduled_time = datetime.utcnow() + timedelta(hours=hours_delay)
+            
+            followup = await db_manager.create_followup(
+                lead_id=lead_id,
+                scheduled_time=scheduled_time,
+                followup_type=followup_type,
+                channel=channel
+            )
+            
+            logger.info(f"Manual follow-up created: {followup.id}")
+            return followup  
     
     async def save_to_db(self, state: OptimizedWorkflowState):
         """Save state updates to database (called after conversations)"""
