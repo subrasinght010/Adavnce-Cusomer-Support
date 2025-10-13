@@ -1,477 +1,218 @@
-# langchain_agents/lead_manager_agent.py
+# nodes/lead_manager_agent.py
 """
-Lead Manager Agent - Outbound Orchestrator
-Handles: fetching leads, validation, scoring, scheduling, follow-ups, DB saves
-Runs continuously in background (every 15 min)
+Lead Manager Agent - DB operations and follow-up management
 """
 
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
-import re
+from typing import List, Dict
 
-from database.crud import DBManager
 from database.db import get_db
-from state.workflow_state import (
-    OptimizedWorkflowState, 
-    calculate_lead_score,
-    CallType,
-    ClientType,
-    LeadStage
-)
+from database.crud import DBManager
+from state.workflow_state import OptimizedWorkflowState
 
 logger = logging.getLogger(__name__)
 
 
 class LeadManagerAgent:
-    """
-    Continuous orchestrator for outbound operations
-    Merges: lead fetching, validation, scoring, scheduling, DB saves
-    """
+    """Manages lead lifecycle, follow-ups, and conversions"""
     
     def __init__(self):
-        self.name = "lead_manager"
-        self.is_running = False
-        self.check_interval = 900  # 15 minutes
-        
-        # Approval queue (pending human approval)
-        self.approval_queue: List[Dict[str, Any]] = []
-        
-        logger.info("✓ Lead Manager Agent initialized")
+        self.logger = logger
     
-    async def start_continuous_operation(self):
-        """Start continuous background loop"""
-        self.is_running = True
-        logger.info("🚀 Lead Manager started - continuous operation every 15 min")
-        
-        while self.is_running:
-            try:
-                await self._process_leads_cycle()
-                await asyncio.sleep(self.check_interval)
-            except Exception as e:
-                logger.error(f"Lead Manager cycle failed: {e}")
-                await asyncio.sleep(60)
+    # ============================================================================
+    # SAVE TO DB (Called after workflow)
+    # ============================================================================
     
-    async def stop(self):
-        """Stop continuous operation"""
-        self.is_running = False
-        logger.info("🛑 Lead Manager stopped")
-    
-    async def _process_leads_cycle(self):
-        """Main processing cycle"""
+    async def save_to_db(self, state: OptimizedWorkflowState):
+        """Save workflow state to database"""
         
-        logger.info("=" * 60)
-        logger.info("🔄 Lead Manager Cycle Starting")
-        logger.info("=" * 60)
-        
-        # Step 1: Fetch new leads
-        raw_leads = await self._fetch_leads_from_db()
-        logger.info(f"Fetched {len(raw_leads)} leads from database")
-        
-        if not raw_leads:
-            logger.info("No new leads to process")
+        if not state.get("lead_id"):
+            self.logger.error("Cannot save: missing lead_id")
             return
         
-        # Step 2: Clean and validate
-        validated_leads = await self._validate_leads(raw_leads)
-        logger.info(f"Validated {len(validated_leads)}/{len(raw_leads)} leads")
-        
-        # Step 3: Score and classify
-        scored_leads = await self._score_and_classify(validated_leads)
-        
-        # Step 4: Assign call types and client types
-        enriched_leads = await self._enrich_leads(scored_leads)
-        
-        # Step 5: Build approval queue
-        await self._build_approval_queue(enriched_leads)
-        
-        # Step 6: Schedule approved leads
-        await self._schedule_approved_leads()
-        
-        # Step 7: Handle follow-ups
-        await self._process_follow_ups()
-        
-        logger.info("✓ Lead Manager cycle complete")
-    
-    async def _fetch_leads_from_db(self) -> List[Dict]:
-        """Fetch uncontacted or due-for-follow-up leads"""
-        
         try:
             async with get_db() as db:
                 db_manager = DBManager(db)
+                lead_id = int(state.get("lead_id"))
                 
-                # Get leads that need contact
-                new_leads = await db_manager.get_leads_by_status("new", limit=50)
-                followup_leads = await db_manager.get_leads_due_for_followup(limit=50)
-                
-                # Convert to dicts
-                all_leads = []
-                for lead in (new_leads + followup_leads):
-                    all_leads.append({
-                        "lead_id": lead.id,
-                        "name": lead.name,
-                        "email": lead.email,
-                        "phone": lead.phone,
-                        "company": lead.company,
-                        "title": lead.title,
-                        "status": lead.status,
-                        "lead_score": lead.lead_score or 50,
-                        "attempt_count": lead.attempt_count or 0,
-                        "last_contact_date": lead.last_contact_date
-                    })
-                
-                return all_leads
-        
-        except Exception as e:
-            logger.error(f"Failed to fetch leads: {e}")
-            return []
-    
-    async def _validate_leads(self, leads: List[Dict]) -> List[Dict]:
-        """Validate email and phone format"""
-        
-        validated = []
-        
-        for lead in leads:
-            issues = []
-            
-            # Validate email
-            if lead.get("email"):
-                if not self._validate_email(lead["email"]):
-                    issues.append("invalid_email")
-            else:
-                issues.append("missing_email")
-            
-            # Validate phone
-            if lead.get("phone"):
-                if not self._validate_phone(lead["phone"]):
-                    issues.append("invalid_phone")
-            else:
-                issues.append("missing_phone")
-            
-            # Must have at least one valid contact method
-            if "invalid_email" in issues and "invalid_phone" in issues:
-                logger.warning(f"Lead {lead['lead_id']} has no valid contact method - skipping")
-                continue
-            
-            lead["validation_issues"] = issues
-            validated.append(lead)
-        
-        return validated
-    
-    def _validate_email(self, email: str) -> bool:
-        """Email format validation"""
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        return bool(re.match(pattern, email))
-    
-    def _validate_phone(self, phone: str) -> bool:
-        """Phone format validation"""
-        digits = re.sub(r'\D', '', phone)
-        return 10 <= len(digits) <= 15
-    
-    async def _score_and_classify(self, leads: List[Dict]) -> List[Dict]:
-        """Score leads and determine stage"""
-        
-        for lead in leads:
-            # Calculate score using existing function
-            state = OptimizedWorkflowState(
-                lead_data=lead,
-                conversation_history=[],
-                intelligence_output={}
-            )
-            score = calculate_lead_score(state)
-            lead["lead_score"] = score
-            
-            # Classify by score
-            if score >= 70:
-                lead["lead_stage"] = LeadStage.QUALIFIED
-                lead["priority"] = "high"
-            elif score >= 40:
-                lead["lead_stage"] = LeadStage.CONTACTED
-                lead["priority"] = "medium"
-            else:
-                lead["lead_stage"] = LeadStage.NURTURE
-                lead["priority"] = "low"
-        
-        return leads
-    
-    async def _enrich_leads(self, leads: List[Dict]) -> List[Dict]:
-        """Assign call_type and client_type"""
-        
-        for lead in leads:
-            # Determine call type based on history
-            attempt_count = lead.get("attempt_count", 0)
-            score = lead.get("lead_score", 50)
-            last_contact = lead.get("last_contact_date")
-            
-            if attempt_count == 0:
-                lead["call_type"] = CallType.COLD
-            elif score >= 70:
-                lead["call_type"] = CallType.HOT
-            elif last_contact and self._days_since(last_contact) > 30:
-                lead["call_type"] = CallType.FOLLOW_UP
-            else:
-                lead["call_type"] = CallType.WARM
-            
-            # Determine client type based on title/company
-            title = (lead.get("title") or "").lower()
-            company = (lead.get("company") or "").lower()
-            
-            if any(word in title for word in ["ceo", "cto", "founder", "director"]):
-                lead["client_type"] = ClientType.PROFESSIONAL
-            elif "enterprise" in company or "inc" in company:
-                lead["client_type"] = ClientType.ENTERPRISE
-            elif attempt_count > 0:
-                lead["client_type"] = ClientType.RETURNING
-            else:
-                lead["client_type"] = ClientType.FIRST_TIME
-        
-        return leads
-    
-    def _days_since(self, date_str: str) -> int:
-        """Calculate days since date"""
-        try:
-            last_date = datetime.fromisoformat(date_str)
-            return (datetime.utcnow() - last_date).days
-        except:
-            return 999
-    
-    async def _build_approval_queue(self, leads: List[Dict]):
-        """Add leads to approval queue"""
-        
-        # Filter out low priority for now
-        high_priority = [l for l in leads if l.get("priority") != "low"]
-        
-        self.approval_queue.extend(high_priority)
-        
-        logger.info(f"Added {len(high_priority)} leads to approval queue")
-        logger.info(f"Total pending approval: {len(self.approval_queue)}")
-    
-    async def get_approval_queue(self) -> List[Dict]:
-        """Get current approval queue (for dashboard)"""
-        return self.approval_queue
-    
-    async def approve_leads(self, lead_ids: List[str], approved_by: str) -> int:
-        """Approve leads for contact"""
-        
-        approved_count = 0
-        
-        for lead_id in lead_ids:
-            # Find lead in queue
-            lead = next((l for l in self.approval_queue if l["lead_id"] == lead_id), None)
-            
-            if not lead:
-                continue
-            
-            # Mark as approved
-            lead["approved_for_contact"] = True
-            lead["approval_timestamp"] = datetime.utcnow().isoformat()
-            lead["approved_by"] = approved_by
-            
-            # Schedule it
-            await self._schedule_lead(lead)
-            
-            # Remove from approval queue
-            self.approval_queue.remove(lead)
-            
-            approved_count += 1
-        
-        logger.info(f"✓ Approved {approved_count} leads for contact")
-        return approved_count
-    
-    async def _schedule_approved_leads(self):
-        """Schedule leads that are already approved (auto-approval mode)"""
-        
-        # For now, no auto-approval - all go to human approval
-        # Future: add auto-approval for high-confidence leads
-        pass
-    
-    async def _schedule_lead(self, lead: Dict):
-        """Schedule outbound contact for lead"""
-        
-        try:
-            # Calculate best time
-            scheduled_time = self._calculate_best_time(lead)
-            
-            # Determine channel priority
-            channels = self._determine_channel_sequence(lead)
-            
-            # Save to database
-            async with get_db() as db:
-                db_manager = DBManager(db)
-                
-                schedule_record = {
-                    "lead_id": lead["lead_id"],
-                    "call_type": lead["call_type"].value,
-                    "client_type": lead["client_type"].value,
-                    "scheduled_time": scheduled_time.isoformat(),
-                    "channels": channels,
-                    "status": "pending",
-                    "attempt_number": lead.get("attempt_count", 0) + 1
+                # Update lead
+                lead_update = {
+                    "last_contacted_at": datetime.utcnow(),
+                    "engagement_score": state.get("engagement_score", 0)
                 }
                 
-                await db_manager.create_scheduled_call(schedule_record)
-            
-            logger.info(f"✓ Scheduled {lead['call_type'].value} call for lead {lead['lead_id']} at {scheduled_time}")
+                if state.get("lead_status"):
+                    lead_update["lead_status"] = state["lead_status"]
+                
+                await db_manager.update_lead(lead_id, lead_update)
+                
+                # Save user message
+                if state.get("current_message"):
+                    await db_manager.add_conversation(
+                        lead_id=lead_id,
+                        message=state["current_message"],
+                        channel=str(state.get("channel", "unknown")),
+                        sender="user",
+                        message_id=state.get("message_id"),
+                        intent_detected=state.get("detected_intent")
+                    )
+                
+                # Save AI response
+                intelligence = state.get("intelligence_output", {})
+                if intelligence.get("response_text"):
+                    await db_manager.add_conversation(
+                        lead_id=lead_id,
+                        message=intelligence["response_text"],
+                        channel=str(state.get("channel", "unknown")),
+                        sender="ai",
+                        intent_detected=state.get("detected_intent"),
+                        cost=state.get("total_cost", 0.0),
+                        campaign_id=state.get("campaign_id")
+                    )
+                
+                self.logger.info(f"✓ State saved for lead {lead_id}")
         
         except Exception as e:
-            logger.error(f"Failed to schedule lead {lead.get('lead_id')}: {e}")
+            self.logger.error(f"Save failed: {e}", exc_info=True)
     
-    def _calculate_best_time(self, lead: Dict) -> datetime:
-        """Calculate optimal contact time"""
-        
-        now = datetime.utcnow()
-        
-        # Business hours: 9 AM - 6 PM
-        # TODO: Add timezone handling
-        
-        # If current time is business hours, schedule 2 hours from now
-        # Otherwise, schedule for tomorrow at 10 AM
-        
-        hour = now.hour
-        
-        if 9 <= hour < 16:  # Before 4 PM
-            return now + timedelta(hours=2)
-        else:
-            # Tomorrow at 10 AM
-            tomorrow = now + timedelta(days=1)
-            return tomorrow.replace(hour=10, minute=0, second=0, microsecond=0)
+    # ============================================================================
+    # FOLLOW-UP MANAGEMENT
+    # ============================================================================
     
-    def _determine_channel_sequence(self, lead: Dict) -> List[str]:
-        """Determine multi-touch sequence"""
-        
-        call_type = lead.get("call_type")
-        validation_issues = lead.get("validation_issues", [])
-        
-        # Build sequence based on call type and available channels
-        sequence = []
-        
-        if call_type == CallType.COLD:
-            # Cold: SMS → WhatsApp → Call → Email
-            if "invalid_phone" not in validation_issues:
-                sequence.extend(["sms", "whatsapp", "call"])
-            if "invalid_email" not in validation_issues:
-                sequence.append("email")
-        
-        elif call_type == CallType.HOT:
-            # Hot: Direct call
-            if "invalid_phone" not in validation_issues:
-                sequence.append("call")
-            else:
-                sequence.append("email")
-        
-        else:
-            # Warm/Follow-up: WhatsApp → Call → Email
-            if "invalid_phone" not in validation_issues:
-                sequence.extend(["whatsapp", "call"])
-            if "invalid_email" not in validation_issues:
-                sequence.append("email")
-        
-        return sequence
-
-    async def _process_follow_ups(self):
-        """
-        Enhanced follow-up processing with:
-        - Channel progression
-        - Max attempts tracking
-        - Auto-scheduling next follow-up
-        """
+    async def process_due_followups(self):
+        """Process pending follow-ups (call from background worker)"""
         
         try:
             async with get_db() as db:
                 db_manager = DBManager(db)
                 
                 # Get due follow-ups
-                due_followups = await db_manager.get_due_followups()
+                followups = await db_manager.get_pending_followups(limit=50)
                 
-                for followup in due_followups:
-                    lead = await db_manager.get_lead(followup.lead_id)
-                    
-                    if not lead:
-                        continue
-                    
-                    # Check max attempts
-                    if lead.attempt_count >= 3:
-                        logger.warning(f"Max attempts reached for lead {lead.id}")
-                        await db_manager.update_followup_status(followup.id, "max_attempts")
-                        continue
-                    
-                    # Create outbound state (workflow handles message generation)
-                    from state.workflow_state import create_initial_state
-                    from graph_workflows.workflow import workflow_router
-                    
-                    state = create_initial_state(
-                        lead_id=str(lead.id),
-                        message="",  # Intelligence agent generates
-                        channel=followup.channel,
-                        direction="outbound",
-                        call_type="follow_up",
-                        lead_data={
-                            "name": lead.name,
-                            "email": lead.email,
-                            "phone": lead.phone,
-                            "company": lead.company
-                        }
-                    )
-                    
-                    # Run through workflow (Intelligence → Format → Send)
-                    result = await workflow_router.run(state)
-                    
-                    # Check if sent successfully
-                    if result.get("communication_sent"):
-                        # Update followup status
-                        await db_manager.update_followup_status(followup.id, "sent")
-                        
-                        # Increment attempt count
-                        await db_manager.update_lead(lead.id, {
-                            "attempt_count": lead.attempt_count + 1,
-                            "last_contacted_at": datetime.utcnow()
-                        })
-                        
-                        # Schedule next follow-up if not max attempts
-                        if lead.attempt_count + 1 < 3:
-                            await self._schedule_next_followup(lead, followup)
-                        
-                        logger.info(f"✓ Follow-up sent to lead {lead.id} via {followup.channel}")
-                    else:
+                if not followups:
+                    return
+                
+                self.logger.info(f"Processing {len(followups)} follow-ups")
+                
+                for followup in followups:
+                    try:
+                        await self._execute_followup(followup, db_manager)
+                    except Exception as e:
+                        self.logger.error(f"Follow-up {followup.id} failed: {e}")
                         await db_manager.update_followup_status(followup.id, "failed")
-                
-                logger.info(f"Processed {len(due_followups)} follow-ups")
         
         except Exception as e:
-            logger.error(f"Follow-up processing failed: {e}")
+            self.logger.error(f"Follow-up processing failed: {e}")
     
-    async def _schedule_next_followup(self, lead, current_followup):
-        """Schedule next follow-up with channel progression"""
+    async def _execute_followup(self, followup, db_manager: DBManager):
+        """Execute single follow-up"""
         
-        # Channel progression: email → sms → whatsapp
+        # Get lead
+        lead = await db_manager.get_lead_by_id(followup.lead_id)
+        if not lead:
+            return
+        
+        # Import here to avoid circular dependency
+        from state.workflow_state import create_initial_state
+        from graph_workflows.workflow import workflow_router
+        
+        # Create outbound state
+        state = create_initial_state(
+            lead_id=str(lead.id),
+            message=followup.message_template or "",
+            channel=followup.channel,
+            direction="outbound",
+            call_type="follow_up",
+            lead_data={
+                "name": lead.name,
+                "email": lead.email,
+                "phone": lead.phone
+            }
+        )
+        
+        # Run workflow
+        result = await workflow_router.run(state)
+        
+        # Update status
+        if result.get("communication_sent"):
+            await db_manager.update_followup_status(followup.id, "sent")
+            self.logger.info(f"✓ Follow-up sent: {followup.id}")
+            
+            # Schedule next follow-up if needed
+            await self._schedule_next_followup(lead, followup, db_manager)
+        else:
+            await db_manager.update_followup_status(followup.id, "failed")
+    
+    async def _schedule_next_followup(self, lead, current_followup, db_manager: DBManager):
+        """Schedule next follow-up in sequence"""
+        
+        # Channel progression
         channel_map = {
             "email": "sms",
             "sms": "whatsapp",
-            "whatsapp": "email"
+            "whatsapp": "call"
         }
         
-        # Delay progression: 24h → 48h → 72h
+        # Delay progression
         delay_map = {
             "email": timedelta(hours=24),
             "sms": timedelta(hours=48),
-            "whatsapp": timedelta(hours=72)
+            "whatsapp": timedelta(hours=72),
+            "call": timedelta(hours=96)
         }
         
-        next_channel = channel_map.get(current_followup.channel, "email")
+        next_channel = channel_map.get(current_followup.channel)
+        if not next_channel:
+            return  # End of sequence
+        
         delay = delay_map.get(current_followup.channel, timedelta(hours=24))
         next_time = datetime.utcnow() + delay
         
-        async with get_db() as db:
-            db_manager = DBManager(db)
-            await db_manager.create_followup(
-                lead_id=lead.id,
-                scheduled_time=next_time,
-                followup_type="reminder",
-                channel=next_channel
-            )
+        await db_manager.create_followup(
+            lead_id=lead.id,
+            scheduled_time=next_time,
+            followup_type="reminder",
+            channel=next_channel
+        )
         
-        logger.info(f"Scheduled next follow-up: {next_channel} at {next_time}")
+        self.logger.info(f"Next follow-up scheduled: {next_channel} at {next_time}")
+    
+    # ============================================================================
+    # LEAD CONVERSION
+    # ============================================================================
+    
+    async def convert_lead_to_client(
+        self,
+        lead_id: int,
+        user_id: int,
+        plan_type: str = None,
+        mrr: float = 0.0
+    ):
+        """Convert lead to client"""
+        
+        try:
+            async with get_db() as db:
+                db_manager = DBManager(db)
+                
+                client = await db_manager.convert_lead_to_client(
+                    lead_id=lead_id,
+                    user_id=user_id,
+                    plan_type=plan_type,
+                    mrr=mrr
+                )
+                
+                self.logger.info(f"✓ Lead {lead_id} converted to client {client.id}")
+                return client
+        
+        except Exception as e:
+            self.logger.error(f"Conversion failed: {e}")
+            raise
+    
+    # ============================================================================
+    # MANUAL OPERATIONS
+    # ============================================================================
     
     async def create_manual_followup(
         self,
@@ -480,78 +221,28 @@ class LeadManagerAgent:
         followup_type: str = "reminder",
         channel: str = "email"
     ):
-        """Manually create a follow-up (for API/dashboard use)"""
-        
-        async with get_db() as db:
-            db_manager = DBManager(db)
-            
-            scheduled_time = datetime.utcnow() + timedelta(hours=hours_delay)
-            
-            followup = await db_manager.create_followup(
-                lead_id=lead_id,
-                scheduled_time=scheduled_time,
-                followup_type=followup_type,
-                channel=channel
-            )
-            
-            logger.info(f"Manual follow-up created: {followup.id}")
-            return followup  
-    
-    async def save_to_db(self, state: OptimizedWorkflowState):
-        """Save state updates to database (called after conversations)"""
-        
-        # FIXED: Add validation before DB operations
-        if not state.get("lead_id"):
-            self.logger.error("Cannot save: missing lead_id")
-            return
+        """Manually schedule follow-up"""
         
         try:
             async with get_db() as db:
                 db_manager = DBManager(db)
                 
-                # FIXED: Validate data before update
-                lead_update = {}
+                scheduled_time = datetime.utcnow() + timedelta(hours=hours_delay)
                 
-                if state.get("lead_score") is not None:
-                    lead_update["lead_score"] = state["lead_score"]
+                followup = await db_manager.create_followup(
+                    lead_id=lead_id,
+                    scheduled_time=scheduled_time,
+                    followup_type=followup_type,
+                    channel=channel
+                )
                 
-                if state.get("lead_stage"):
-                    lead_update["status"] = state["lead_stage"]
-                
-                if state.get("detected_intent"):
-                    lead_update["last_intent"] = state["detected_intent"]
-                
-                if state.get("sentiment"):
-                    lead_update["last_sentiment"] = state["sentiment"]
-                
-                # Always update these
-                lead_update.update({
-                    "last_contact_date": datetime.utcnow().isoformat(),
-                    "attempt_count": state.get("attempt_count", 0) + 1
-                })
-                
-                await db_manager.update_lead(state.get("lead_id"), lead_update)
-                
-                # Save conversation if message exists
-                if state.get("current_message"):
-                    conversation_record = {
-                        "lead_id": state.get("lead_id"),
-                        "session_id": state.get("session_id"),
-                        "direction": state.get("direction"),
-                        "channel": str(state.get("channel")),  # Convert enum to string
-                        "message": state.get("current_message"),
-                        "response": state.get("intelligence_output", {}).get("response_text"),
-                        "intent": state.get("detected_intent"),
-                        "sentiment": state.get("sentiment"),
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    
-                    await db_manager.save_conversation(conversation_record)
-                
-                logger.info(f"✓ DB updated for lead {state.get('lead_id')}")
+                self.logger.info(f"Manual follow-up created: {followup.id}")
+                return followup
         
         except Exception as e:
-            logger.error(f"DB save failed: {e}", exc_info=True)
+            self.logger.error(f"Manual follow-up failed: {e}")
+            raise
+
 
 # Export singleton
 lead_manager_agent = LeadManagerAgent()

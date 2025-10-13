@@ -37,6 +37,27 @@ class MessageIntelligenceAgent(BaseNode):
         self.logger.info(f"Formatting {direction} message for {channel}")
         
         try:
+            pending = state.get("pending_sends", [])
+    
+            if pending:
+                self.logger.info(f"Processing {len(pending)} pending sends")
+                
+                # Get full conversation context
+                conversation_summary = self._build_conversation_summary(
+                    state.get("conversation_history", [])
+                )
+                
+                # Process each pending send
+                for item in pending:
+                    try:
+                        await self._process_pending_send(item, conversation_summary, state)
+                    except Exception as e:
+                        self.logger.error(f"Failed to send via {item['channel']}: {e}")
+                
+                # Clear pending sends
+                state["pending_sends"] = []
+                state["communication_sent"] = True
+
             # Detect if this is a reply/follow-up
             is_reply = len(conversation_history) > 0
             
@@ -240,6 +261,157 @@ class MessageIntelligenceAgent(BaseNode):
             "text": formatted
         }
 
+    def _build_conversation_summary(self, history: List[Dict]) -> str:
+        """Build conversation summary for context"""
+        if not history:
+            return "No previous conversation"
+        
+        summary_lines = []
+        for msg in history[-10:]:  # Last 10 messages
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            summary_lines.append(f"{role.title()}: {content[:100]}")
+        
+        return "\n".join(summary_lines)
+    
+    async def _process_pending_send(
+        self,
+        item: Dict,
+        conversation_summary: str,
+        state: OptimizedWorkflowState
+    ):
+        """Send message with full context"""
+        
+        channel = item["channel"]
+        to = item["to"]
+        content_type = item["content_type"]
+        
+        if channel == "email":
+            await self._send_email_with_context(to, content_type, conversation_summary)
+        elif channel == "sms":
+            await self._send_sms_with_context(to, content_type)
+        elif channel == "whatsapp":
+            await self._send_whatsapp_with_context(to, content_type)
 
+    async def _send_email_with_context(
+        self,
+        to: str,
+        content_type: str,
+        conversation_summary: str
+    ):
+        """Send email with conversation context"""
+        from services.email_service import send_email
+        
+        subject, body_template = self._get_email_template(content_type)
+        
+        # Add conversation context
+        body = f"""
+        <div style="font-family: Arial, sans-serif;">
+            <h2>{subject}</h2>
+            {body_template}
+            
+            <hr style="margin: 30px 0;">
+            
+            <h3>Conversation Summary</h3>
+            <pre style="background: #f5f5f5; padding: 15px; border-radius: 5px;">
+    {conversation_summary}
+            </pre>
+            
+            <p style="color: #666; font-size: 12px;">
+                This email was sent following our conversation.
+            </p>
+        </div>
+        """
+        
+        result = await send_email(to=to, subject=subject, body=body)
+        self.logger.info(f"Email sent to {to}: {result}")
+
+    async def _send_sms_with_context(self, to: str, content_type: str):
+        """Send SMS (no conversation context - too long)"""
+        from services.sms_service import send_sms
+        
+        message = self._get_sms_template(content_type)
+        result = await send_sms(to_phone=to, message=message)
+        self.logger.info(f"SMS sent to {to}: {result}")
+
+    async def _send_whatsapp_with_context(self, to: str, content_type: str):
+        """Send WhatsApp"""
+        from services.whatsapp_service import send_whatsapp
+        
+        message = self._get_whatsapp_template(content_type)
+        result = await send_whatsapp(to_phone=to, message=message)
+        self.logger.info(f"WhatsApp sent to {to}: {result}")
+
+    def _get_email_template(self, content_type: str):
+        """Email templates with HTML"""
+        templates = {
+            'pricing': (
+                'TechCorp Pricing Plans',
+                '''
+                <h3>Our Pricing Plans</h3>
+                <table style="border-collapse: collapse; width: 100%;">
+                    <tr style="background: #f0f0f0;">
+                        <th style="padding: 10px; text-align: left;">Plan</th>
+                        <th style="padding: 10px; text-align: left;">Price</th>
+                        <th style="padding: 10px; text-align: left;">Features</th>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px;">Basic</td>
+                        <td style="padding: 10px;">$99/month</td>
+                        <td style="padding: 10px;">Core features</td>
+                    </tr>
+                    <tr style="background: #f9f9f9;">
+                        <td style="padding: 10px;">Pro</td>
+                        <td style="padding: 10px;">$199/month</td>
+                        <td style="padding: 10px;">Advanced features</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px;">Enterprise</td>
+                        <td style="padding: 10px;">Custom</td>
+                        <td style="padding: 10px;">Full suite</td>
+                    </tr>
+                </table>
+                '''
+            ),
+            'product': (
+                'TechCorp Product Information',
+                '<p>Detailed product information attached...</p>'
+            ),
+            'catalog': (
+                'TechCorp Full Catalog',
+                '<p>Our complete product catalog is attached.</p>'
+            )
+        }
+        return templates.get(content_type, ('TechCorp Info', '<p>Information as requested</p>'))
+
+    def _get_sms_template(self, content_type: str):
+        """SMS templates (160 char limit)"""
+        templates = {
+            'pricing': 'TechCorp Pricing: Basic $99/mo, Pro $199/mo, Enterprise custom. Details: techcorp.com/pricing',
+            'product': 'TechCorp Product info: techcorp.com/products',
+            'catalog': 'Full catalog: techcorp.com/catalog'
+        }
+        return templates.get(content_type, 'Info: techcorp.com')
+
+    def _get_whatsapp_template(self, content_type: str):
+        """WhatsApp templates with emojis"""
+        templates = {
+            'pricing': '''💰 *TechCorp Pricing Plans*
+
+        ✅ Basic: $99/month
+        ✅ Pro: $199/month  
+        ✅ Enterprise: Custom pricing
+
+        Visit: techcorp.com/pricing''',
+                'product': '''📦 *Product Information*
+
+        Check out our products at:
+        techcorp.com/products''',
+                'catalog': '''📚 *Full Catalog*
+
+        Download our complete catalog:
+        techcorp.com/catalog'''
+            }
+        return templates.get(content_type, 'More info at techcorp.com')
 # Singleton instance
 message_intelligence_agent = MessageIntelligenceAgent()

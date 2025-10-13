@@ -9,3 +9,4 @@ alembic upgrade head
 
 # 4️⃣ Generate new migration
 alembic revision --autogenerate -m "Added new column to users"
+

@@ -29,6 +29,8 @@ class BaseIntelligenceAgent(BaseNode):
     
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
         """Main execution with ReAct loop"""
+        self._pending_sends = []
+
         user_message = state.get('current_message')
         self.logger.info(f"Executing agent for message: {user_message[:50]}...")
         
@@ -46,6 +48,10 @@ class BaseIntelligenceAgent(BaseNode):
             intelligence = self._fallback()
         
         # Update state
+        if hasattr(self, '_pending_sends') and self._pending_sends:
+            if "pending_sends" not in state:
+                state["pending_sends"] = []
+            state["pending_sends"].extend(self._pending_sends)
         return self._update_state(state, user_message, intelligence)
     
     def _build_context(self, state: dict) -> str:

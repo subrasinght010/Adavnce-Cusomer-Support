@@ -1,7 +1,9 @@
 """Inbound Intelligence Agent - Refactored"""
+from datetime import datetime
 from langchain_core.tools import Tool
 from nodes.core.base_intelligence_agent import BaseIntelligenceAgent
 from nodes.core.intelligence_models import IntelligenceOutput
+from state.workflow_state import OptimizedWorkflowState
 from tools.language_model import llm
 from tools.vector_store import query_knowledge_base
 from database.crud import DBManager
@@ -16,14 +18,17 @@ class InboundAgent(BaseIntelligenceAgent):
         super().__init__("inbound_intelligence", llm)
     
     def _create_tools(self):
-        self.logger.info("Initializing 6 tools for inbound agent")
+        self.logger.info("Initializing 9 tools")
         return [
-            Tool(name="search_knowledge_base", description="Search KB for product/policy info. Input: query", func=self._search_kb),
-            Tool(name="get_lead_history", description="Get past conversations. Input: lead_id", func=self._get_history),
-            Tool(name="check_ticket_status", description="Check ticket status. Input: ticket_id", func=self._check_ticket),
+            Tool(name="search_knowledge_base", description="Search KB. Input: query", func=self._search_kb),
+            Tool(name="get_lead_history", description="Get history. Input: lead_id", func=self._get_history),
+            Tool(name="check_ticket_status", description="Check ticket. Input: ticket_id", func=self._check_ticket),
             Tool(name="schedule_callback", description="Schedule callback. Input: lead_id|datetime|reason", func=self._schedule_callback),
             Tool(name="send_details", description="Send details. Input: lead_id|channel|content_type", func=self._send_details),
-            Tool(name="escalate_to_human", description="Escalate to human. Input: reason", func=self._escalate),
+            Tool(name="escalate_to_human", description="Escalate. Input: reason", func=self._escalate),
+            Tool(name="send_email_now", description="Queue email. Input: email|content_type", func=self._queue_email),
+            Tool(name="send_sms_now", description="Queue SMS. Input: phone|content_type", func=self._queue_sms),
+            Tool(name="send_whatsapp_now", description="Queue WhatsApp. Input: phone|content_type", func=self._queue_whatsapp),
         ]
     
     def _get_system_prompt(self, **kwargs) -> str:
@@ -152,6 +157,42 @@ class InboundAgent(BaseIntelligenceAgent):
     def _escalate(self, reason: str) -> str:
         self.logger.warning(f"Escalating to human: {reason}")
         return f"Escalated: {reason}"
+
+    def _queue_email(self, tool_input: str) -> str:
+        try:
+            email, content_type = tool_input.split('|')
+            self._pending_sends.append({"channel": "email", "to": email, "content_type": content_type, "queued_at": datetime.utcnow().isoformat()})
+            return f"✓ Will send {content_type} to {email} at end of call"
+        except Exception as e:
+            return f"Error: {e}"
+    
+    def _queue_sms(self, tool_input: str) -> str:
+        try:
+            phone, content_type = tool_input.split('|')
+            self._pending_sends.append({"channel": "sms", "to": phone, "content_type": content_type, "queued_at": datetime.utcnow().isoformat()})
+            return f"✓ Will text {content_type} to {phone} at end of call"
+        except Exception as e:
+            return f"Error: {e}"
+    
+    def _queue_whatsapp(self, tool_input: str) -> str:
+        try:
+            phone, content_type = tool_input.split('|')
+            self._pending_sends.append({"channel": "whatsapp", "to": phone, "content_type": content_type, "queued_at": datetime.utcnow().isoformat()})
+            return f"✓ Will WhatsApp {content_type} to {phone} at end of call"
+        except Exception as e:
+            return f"Error: {e}"
+
+    async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
+        self._pending_sends = []
+        state = await super().execute(state)
+        
+        if self._pending_sends:
+            if "pending_sends" not in state:
+                state["pending_sends"] = []
+            state["pending_sends"].extend(self._pending_sends)
+            self.logger.info(f"Added {len(self._pending_sends)} pending sends")
+        
+        return state
 
 
 inbound_agent = InboundAgent()
