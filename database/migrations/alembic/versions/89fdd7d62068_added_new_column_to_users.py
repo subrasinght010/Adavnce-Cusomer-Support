@@ -1,8 +1,8 @@
-"""Initial schema
+"""Added new column to users
 
-Revision ID: b3e224997917
+Revision ID: 89fdd7d62068
 Revises: 
-Create Date: 2025-10-14 00:44:51.003149
+Create Date: 2025-10-14 04:03:32.680519
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'b3e224997917'
+revision: str = '89fdd7d62068'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -24,13 +24,15 @@ def upgrade() -> None:
     op.create_table('campaigns',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
+    sa.Column('description', sa.Text(), nullable=True),
     sa.Column('campaign_type', sa.String(), nullable=False),
     sa.Column('touch_sequence_json', sa.JSON(), nullable=False),
     sa.Column('active', sa.Boolean(), nullable=True),
     sa.Column('total_leads', sa.Integer(), nullable=True),
+    sa.Column('completed_sequences', sa.Integer(), nullable=True),
     sa.Column('conversion_count', sa.Integer(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('is_deleted', sa.Boolean(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
@@ -43,18 +45,15 @@ def upgrade() -> None:
     sa.Column('username', sa.String(), nullable=True),
     sa.Column('password', sa.String(), nullable=True),
     sa.Column('email', sa.String(), nullable=True),
-    sa.Column('name', sa.String(), nullable=False),
-    sa.Column('phone', sa.String(), nullable=True),
-    sa.Column('title', sa.String(), nullable=True),
     sa.Column('role', sa.String(), nullable=True),
     sa.Column('active', sa.Boolean(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('is_deleted', sa.Boolean(), nullable=True),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('email')
     )
-    op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
     op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
     op.create_index(op.f('ix_users_is_deleted'), 'users', ['is_deleted'], unique=False)
     op.create_index(op.f('ix_users_username'), 'users', ['username'], unique=True)
@@ -63,19 +62,29 @@ def upgrade() -> None:
     sa.Column('name', sa.String(), nullable=False),
     sa.Column('domain', sa.String(), nullable=True),
     sa.Column('industry', sa.String(), nullable=True),
+    sa.Column('size', sa.String(), nullable=True),
     sa.Column('primary_email', sa.String(), nullable=True),
     sa.Column('primary_phone', sa.String(), nullable=True),
+    sa.Column('website', sa.String(), nullable=True),
+    sa.Column('address_line1', sa.String(), nullable=True),
+    sa.Column('address_line2', sa.String(), nullable=True),
     sa.Column('city', sa.String(), nullable=True),
+    sa.Column('state', sa.String(), nullable=True),
     sa.Column('country', sa.String(), nullable=True),
+    sa.Column('postal_code', sa.String(), nullable=True),
     sa.Column('timezone', sa.String(), nullable=True),
+    sa.Column('annual_revenue', sa.Float(), nullable=True),
+    sa.Column('employee_count', sa.Integer(), nullable=True),
     sa.Column('account_owner_id', sa.Integer(), nullable=True),
     sa.Column('status', sa.String(), nullable=True),
+    sa.Column('extra_data', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('is_deleted', sa.Boolean(), nullable=True),
     sa.ForeignKeyConstraint(['account_owner_id'], ['users.id'], ),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('domain')
     )
     op.create_index(op.f('ix_organizations_city'), 'organizations', ['city'], unique=False)
     op.create_index(op.f('ix_organizations_country'), 'organizations', ['country'], unique=False)
@@ -88,33 +97,64 @@ def upgrade() -> None:
     sa.Column('name', sa.String(), nullable=False),
     sa.Column('email', sa.String(), nullable=False),
     sa.Column('phone', sa.String(), nullable=False),
-    sa.Column('whatsapp_number', sa.String(), nullable=True),
     sa.Column('title', sa.String(), nullable=True),
+    sa.Column('whatsapp_number', sa.String(), nullable=True),
     sa.Column('city', sa.String(), nullable=True),
     sa.Column('country', sa.String(), nullable=True),
     sa.Column('timezone', sa.String(), nullable=True),
-    sa.Column('lead_status', sa.String(), nullable=True),
+    sa.Column('client_type', sa.String(), nullable=True),
     sa.Column('preferred_channel', sa.String(), nullable=True),
+    sa.Column('lead_status', sa.String(), nullable=True),
     sa.Column('next_action_time', sa.DateTime(), nullable=True),
+    sa.Column('pending_action', sa.String(), nullable=True),
     sa.Column('last_contacted_at', sa.DateTime(), nullable=True),
+    sa.Column('last_message_at', sa.DateTime(), nullable=True),
+    sa.Column('last_followup_at', sa.DateTime(), nullable=True),
     sa.Column('message_count', sa.Integer(), nullable=True),
+    sa.Column('response_received', sa.Boolean(), nullable=True),
+    sa.Column('followup_count', sa.Integer(), nullable=True),
+    sa.Column('total_conversations', sa.Integer(), nullable=True),
     sa.Column('engagement_score', sa.Integer(), nullable=True),
     sa.Column('total_cost', sa.Float(), nullable=True),
+    sa.Column('last_intent', sa.String(), nullable=True),
+    sa.Column('last_sentiment', sa.String(), nullable=True),
     sa.Column('source', sa.String(), nullable=True),
     sa.Column('utm_json', sa.JSON(), nullable=True),
+    sa.Column('extra_data', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('is_deleted', sa.Boolean(), nullable=True),
     sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('email'),
     sa.UniqueConstraint('phone')
     )
-    op.create_index(op.f('ix_leads_email'), 'leads', ['email'], unique=True)
     op.create_index(op.f('ix_leads_id'), 'leads', ['id'], unique=False)
     op.create_index(op.f('ix_leads_is_deleted'), 'leads', ['is_deleted'], unique=False)
-    op.create_index(op.f('ix_leads_lead_status'), 'leads', ['lead_status'], unique=False)
-    op.create_index(op.f('ix_leads_source'), 'leads', ['source'], unique=False)
+    op.create_table('api_logs',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('endpoint', sa.String(), nullable=False),
+    sa.Column('method', sa.String(), nullable=False),
+    sa.Column('request_json', sa.JSON(), nullable=True),
+    sa.Column('response_json', sa.JSON(), nullable=True),
+    sa.Column('status_code', sa.Integer(), nullable=True),
+    sa.Column('duration_ms', sa.Integer(), nullable=True),
+    sa.Column('error', sa.Text(), nullable=True),
+    sa.Column('lead_id', sa.Integer(), nullable=True),
+    sa.Column('ip_address', sa.String(), nullable=True),
+    sa.Column('user_agent', sa.String(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
+    sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('is_deleted', sa.Boolean(), nullable=True),
+    sa.ForeignKeyConstraint(['lead_id'], ['leads.id'], ondelete='SET NULL'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_api_logs_created_at'), 'api_logs', ['created_at'], unique=False)
+    op.create_index(op.f('ix_api_logs_endpoint'), 'api_logs', ['endpoint'], unique=False)
+    op.create_index(op.f('ix_api_logs_id'), 'api_logs', ['id'], unique=False)
+    op.create_index(op.f('ix_api_logs_is_deleted'), 'api_logs', ['is_deleted'], unique=False)
     op.create_table('clients',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('lead_id', sa.Integer(), nullable=True),
@@ -153,12 +193,20 @@ def upgrade() -> None:
     sa.Column('channel', sa.String(), nullable=False),
     sa.Column('sender', sa.String(), nullable=False),
     sa.Column('timestamp', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
+    sa.Column('read_at', sa.DateTime(), nullable=True),
     sa.Column('parent_message_id', sa.Integer(), nullable=True),
     sa.Column('message_id', sa.String(), nullable=True),
     sa.Column('delivery_status', sa.String(), nullable=True),
     sa.Column('intent_detected', sa.String(), nullable=True),
+    sa.Column('sentiment', sa.String(), nullable=True),
+    sa.Column('embedding_id', sa.String(), nullable=True),
     sa.Column('cost', sa.Float(), nullable=True),
+    sa.Column('processing_time_ms', sa.Integer(), nullable=True),
+    sa.Column('kb_used', sa.Boolean(), nullable=True),
+    sa.Column('kb_doc_ids', sa.String(), nullable=True),
     sa.Column('campaign_id', sa.Integer(), nullable=True),
+    sa.Column('campaign_touch_number', sa.Integer(), nullable=True),
+    sa.Column('meta_data', sa.JSON(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
@@ -168,12 +216,8 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['parent_message_id'], ['conversations.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.create_index(op.f('ix_conversations_channel'), 'conversations', ['channel'], unique=False)
     op.create_index(op.f('ix_conversations_id'), 'conversations', ['id'], unique=False)
     op.create_index(op.f('ix_conversations_is_deleted'), 'conversations', ['is_deleted'], unique=False)
-    op.create_index(op.f('ix_conversations_lead_id'), 'conversations', ['lead_id'], unique=False)
-    op.create_index(op.f('ix_conversations_message_id'), 'conversations', ['message_id'], unique=False)
-    op.create_index(op.f('ix_conversations_timestamp'), 'conversations', ['timestamp'], unique=False)
     op.create_table('followups',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('lead_id', sa.Integer(), nullable=True),
@@ -219,6 +263,10 @@ def upgrade() -> None:
     sa.Column('mime_type', sa.String(), nullable=False),
     sa.Column('size_bytes', sa.Integer(), nullable=False),
     sa.Column('storage_path', sa.String(), nullable=False),
+    sa.Column('thumbnail_path', sa.String(), nullable=True),
+    sa.Column('virus_scanned', sa.Boolean(), nullable=True),
+    sa.Column('scan_result', sa.String(), nullable=True),
+    sa.Column('uploaded_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
@@ -236,9 +284,15 @@ def upgrade() -> None:
     sa.Column('body_text', sa.Text(), nullable=True),
     sa.Column('from_email', sa.String(), nullable=False),
     sa.Column('to_email', sa.String(), nullable=False),
+    sa.Column('cc', sa.String(), nullable=True),
+    sa.Column('bcc', sa.String(), nullable=True),
     sa.Column('thread_id', sa.String(), nullable=True),
+    sa.Column('references', sa.String(), nullable=True),
     sa.Column('in_reply_to', sa.String(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('headers_json', sa.JSON(), nullable=True),
+    sa.Column('raw_email_path', sa.String(), nullable=True),
+    sa.Column('size_bytes', sa.Integer(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('is_deleted', sa.Boolean(), nullable=True),
@@ -248,17 +302,46 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_email_messages_id'), 'email_messages', ['id'], unique=False)
     op.create_index(op.f('ix_email_messages_is_deleted'), 'email_messages', ['is_deleted'], unique=False)
-    op.create_index(op.f('ix_email_messages_thread_id'), 'email_messages', ['thread_id'], unique=False)
+    op.create_table('handoff_queue',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('lead_id', sa.Integer(), nullable=True),
+    sa.Column('conversation_id', sa.Integer(), nullable=True),
+    sa.Column('reason', sa.String(), nullable=False),
+    sa.Column('priority', sa.String(), nullable=True),
+    sa.Column('status', sa.String(), nullable=True),
+    sa.Column('assigned_to', sa.Integer(), nullable=True),
+    sa.Column('notes', sa.Text(), nullable=True),
+    sa.Column('resolution_notes', sa.Text(), nullable=True),
+    sa.Column('queued_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
+    sa.Column('assigned_at', sa.DateTime(), nullable=True),
+    sa.Column('resolved_at', sa.DateTime(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
+    sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('is_deleted', sa.Boolean(), nullable=True),
+    sa.ForeignKeyConstraint(['assigned_to'], ['users.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['conversation_id'], ['conversations.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['lead_id'], ['leads.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_handoff_queue_id'), 'handoff_queue', ['id'], unique=False)
+    op.create_index(op.f('ix_handoff_queue_is_deleted'), 'handoff_queue', ['is_deleted'], unique=False)
     op.create_table('support_tickets',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('client_id', sa.Integer(), nullable=True),
     sa.Column('conversation_id', sa.Integer(), nullable=True),
     sa.Column('ticket_number', sa.String(), nullable=False),
     sa.Column('subject', sa.String(), nullable=False),
+    sa.Column('description', sa.Text(), nullable=True),
+    sa.Column('category', sa.String(), nullable=True),
     sa.Column('priority', sa.String(), nullable=True),
     sa.Column('status', sa.String(), nullable=True),
     sa.Column('assigned_to', sa.Integer(), nullable=True),
+    sa.Column('resolution_notes', sa.Text(), nullable=True),
     sa.Column('resolved_at', sa.DateTime(), nullable=True),
+    sa.Column('first_response_at', sa.DateTime(), nullable=True),
+    sa.Column('due_date', sa.DateTime(), nullable=True),
+    sa.Column('sla_breached', sa.Boolean(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
@@ -270,8 +353,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_support_tickets_id'), 'support_tickets', ['id'], unique=False)
     op.create_index(op.f('ix_support_tickets_is_deleted'), 'support_tickets', ['is_deleted'], unique=False)
-    op.create_index(op.f('ix_support_tickets_priority'), 'support_tickets', ['priority'], unique=False)
-    op.create_index(op.f('ix_support_tickets_status'), 'support_tickets', ['status'], unique=False)
     op.create_index(op.f('ix_support_tickets_ticket_number'), 'support_tickets', ['ticket_number'], unique=True)
     # ### end Alembic commands ###
 
@@ -280,12 +361,12 @@ def downgrade() -> None:
     """Downgrade schema."""
     # ### commands auto generated by Alembic - please adjust! ###
     op.drop_index(op.f('ix_support_tickets_ticket_number'), table_name='support_tickets')
-    op.drop_index(op.f('ix_support_tickets_status'), table_name='support_tickets')
-    op.drop_index(op.f('ix_support_tickets_priority'), table_name='support_tickets')
     op.drop_index(op.f('ix_support_tickets_is_deleted'), table_name='support_tickets')
     op.drop_index(op.f('ix_support_tickets_id'), table_name='support_tickets')
     op.drop_table('support_tickets')
-    op.drop_index(op.f('ix_email_messages_thread_id'), table_name='email_messages')
+    op.drop_index(op.f('ix_handoff_queue_is_deleted'), table_name='handoff_queue')
+    op.drop_index(op.f('ix_handoff_queue_id'), table_name='handoff_queue')
+    op.drop_table('handoff_queue')
     op.drop_index(op.f('ix_email_messages_is_deleted'), table_name='email_messages')
     op.drop_index(op.f('ix_email_messages_id'), table_name='email_messages')
     op.drop_table('email_messages')
@@ -298,21 +379,19 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_followups_is_deleted'), table_name='followups')
     op.drop_index(op.f('ix_followups_id'), table_name='followups')
     op.drop_table('followups')
-    op.drop_index(op.f('ix_conversations_timestamp'), table_name='conversations')
-    op.drop_index(op.f('ix_conversations_message_id'), table_name='conversations')
-    op.drop_index(op.f('ix_conversations_lead_id'), table_name='conversations')
     op.drop_index(op.f('ix_conversations_is_deleted'), table_name='conversations')
     op.drop_index(op.f('ix_conversations_id'), table_name='conversations')
-    op.drop_index(op.f('ix_conversations_channel'), table_name='conversations')
     op.drop_table('conversations')
     op.drop_index(op.f('ix_clients_is_deleted'), table_name='clients')
     op.drop_index(op.f('ix_clients_id'), table_name='clients')
     op.drop_table('clients')
-    op.drop_index(op.f('ix_leads_source'), table_name='leads')
-    op.drop_index(op.f('ix_leads_lead_status'), table_name='leads')
+    op.drop_index(op.f('ix_api_logs_is_deleted'), table_name='api_logs')
+    op.drop_index(op.f('ix_api_logs_id'), table_name='api_logs')
+    op.drop_index(op.f('ix_api_logs_endpoint'), table_name='api_logs')
+    op.drop_index(op.f('ix_api_logs_created_at'), table_name='api_logs')
+    op.drop_table('api_logs')
     op.drop_index(op.f('ix_leads_is_deleted'), table_name='leads')
     op.drop_index(op.f('ix_leads_id'), table_name='leads')
-    op.drop_index(op.f('ix_leads_email'), table_name='leads')
     op.drop_table('leads')
     op.drop_index(op.f('ix_organizations_name'), table_name='organizations')
     op.drop_index(op.f('ix_organizations_is_deleted'), table_name='organizations')
@@ -323,7 +402,6 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_users_username'), table_name='users')
     op.drop_index(op.f('ix_users_is_deleted'), table_name='users')
     op.drop_index(op.f('ix_users_id'), table_name='users')
-    op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_table('users')
     op.drop_index(op.f('ix_campaigns_is_deleted'), table_name='campaigns')
     op.drop_index(op.f('ix_campaigns_id'), table_name='campaigns')

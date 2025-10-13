@@ -42,7 +42,8 @@ class Lead(BaseModel):
     email = Column(String, nullable=False, unique=True)
     phone = Column(String, nullable=False, unique=True)
     title = Column(String, nullable=True)  # Job title
-    
+    whatsapp_number = Column(String, nullable=True)  # ADD THIS LINE
+
     # Location
     city = Column(String, nullable=True)
     country = Column(String, nullable=True)
