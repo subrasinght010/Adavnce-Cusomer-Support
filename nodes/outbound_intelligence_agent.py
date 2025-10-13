@@ -14,28 +14,7 @@ from state.workflow_state import OptimizedWorkflowState, extract_quick_fields
 from tools.language_model import LanguageModel
 from database.crud import DBManager
 from database.db import get_db
-
-
-OUTBOUND_REACT_PROMPT = """You are a sales agent. Use tools to gather info, then craft an appropriate outbound message.
-
-Call Type: {call_type}
-Client Type: {client_type}
-
-TOOLS:
-{tools}
-
-Use this format:
-Question: what I need to know
-Thought: what to do
-Action: tool name
-Action Input: tool input
-Observation: result
-... (repeat as needed)
-Thought: I have enough info
-Final Answer: your sales message (natural language, not JSON)
-
-Question: {input}
-{agent_scratchpad}"""
+from prompts.system_prompts import OUTBOUND_REACT_PROMPT
 
 
 class OutboundIntelligenceAgent(BaseNode):

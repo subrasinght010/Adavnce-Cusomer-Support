@@ -16,7 +16,7 @@ from tools.language_model import LanguageModel
 from tools.vector_store import query_knowledge_base
 from database.crud import DBManager
 from database.db import get_db
-
+from prompts.system_prompts import INBOUND_REACT_PROMPT
 
 
 
@@ -63,16 +63,16 @@ class InboundIntelligenceAgent(BaseNode):
             return "Error fetching history"
     
     def _create_agent(self):
-        prompt = PromptTemplate.from_template(REACT_PROMPT)
+        prompt = PromptTemplate.from_template(INBOUND_REACT_PROMPT)
         agent = create_react_agent(self.llm, self.tools, prompt)
         return AgentExecutor(agent=agent, tools=self.tools, verbose=True, max_iterations=3, handle_parsing_errors=True)
     
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
         input_text = f"""
-User message: {state.get('current_message')}
-Lead: {state.get('lead_data',{}).get('name')}
-Channel: {state.get('channel')}
-"""
+        User message: {state.get('current_message')}
+        Lead: {state.get('lead_data',{}).get('name')}
+        Channel: {state.get('channel')}
+        """
         
         try:
             result = await self.agent.ainvoke({"input": input_text})
