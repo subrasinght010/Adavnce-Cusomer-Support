@@ -3,7 +3,6 @@
 Base Node class with built-in observability, error handling, and monitoring
 All your nodes should inherit from this class
 """
-# Add this import at the top
 
 import asyncio
 import time
@@ -12,6 +11,8 @@ from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 from datetime import datetime
 import functools
+import inspect
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -56,10 +57,14 @@ class BaseNode(ABC):
         Main entry point - LangGraph calls this
         Supports both sync and async execute methods
         """
-        if asyncio.iscoroutinefunction(self.execute):
+        # FIXED: Check if execute is async using inspect
+        if inspect.iscoroutinefunction(self.execute):
             # Async execute method
             try:
                 loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Already in event loop, create task
+                    return asyncio.create_task(self._execute_with_monitoring(state))
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -132,7 +137,14 @@ class BaseNode(ABC):
         self._log_start(state)
         
         try:
-            # Execute the actual node logic
+            # FIXED: Check if execute is actually async before calling
+            if inspect.iscoroutinefunction(self.execute):
+                raise RuntimeError(
+                    f"Node {self.name} has async execute() but was called synchronously. "
+                    "This should not happen - check __call__ implementation."
+                )
+            
+            # Execute the actual node logic (sync)
             result = self.execute(state)
             
             # Calculate duration
@@ -357,7 +369,6 @@ class BaseNodeWithCache(BaseNode):
         self.logger.info("Cache cleared")
 
 
-# Add this decorator function after the BaseNode class (or before it)
 def with_timing(func):
     """
     Decorator for timing async functions
@@ -379,6 +390,7 @@ def with_timing(func):
             self.logger.error(f"[{self.name}] Failed after {duration_ms:.2f}ms: {e}")
             raise
     return wrapper
+
 
 # ============================================================================
 # EXAMPLE USAGE

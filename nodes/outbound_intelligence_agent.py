@@ -44,30 +44,78 @@ class OutboundIntelligenceAgent(BaseNode):
         ]
     
     def _get_profile(self, lead_id: str) -> str:
+        """FIXED: Proper sync wrapper"""
         try:
             import asyncio
-            async def _fetch():
-                async with get_db() as db:
-                    mgr = DBManager(db)
-                    lead = await mgr.get_lead(lead_id)
-                    return f"Score: {lead.lead_score}, Stage: {lead.status}, Attempts: {lead.attempt_count}" if lead else "No data"
-            return asyncio.run(_fetch())
-        except:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(self._fetch_profile(lead_id))
+                loop.close()
+                return result
+            else:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(self._run_profile_in_new_loop, lead_id)
+                    return future.result(timeout=10)
+        except Exception as e:
+            self.logger.error(f"Profile fetch failed: {e}")
             return "Error"
-    
+
+    def _run_profile_in_new_loop(self, lead_id: str) -> str:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(self._fetch_profile(lead_id))
+        finally:
+            loop.close()
+
+    async def _fetch_profile(self, lead_id: str) -> str:
+        async with get_db() as db:
+            mgr = DBManager(db)
+            lead = await mgr.get_lead(lead_id)
+            return f"Score: {lead.lead_score}, Stage: {lead.status}, Attempts: {lead.attempt_count}" if lead else "No data"
+
     def _get_objections(self, lead_id: str) -> str:
+        """FIXED: Proper sync wrapper"""
         try:
             import asyncio
-            async def _fetch():
-                async with get_db() as db:
-                    mgr = DBManager(db)
-                    convos = await mgr.get_lead_conversations(lead_id, limit=10)
-                    objections = [c.message for c in convos if any(word in c.message.lower() for word in ["not interested", "too expensive", "no budget"])]
-                    return ", ".join(objections[:3]) if objections else "No objections recorded"
-            return asyncio.run(_fetch())
-        except:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(self._fetch_objections(lead_id))
+                loop.close()
+                return result
+            else:
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(self._run_objections_in_new_loop, lead_id)
+                    return future.result(timeout=10)
+        except Exception as e:
+            self.logger.error(f"Objections fetch failed: {e}")
             return "None"
-    
+
+    def _run_objections_in_new_loop(self, lead_id: str) -> str:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(self._fetch_objections(lead_id))
+        finally:
+            loop.close()
+
+    async def _fetch_objections(self, lead_id: str) -> str:
+        async with get_db() as db:
+            mgr = DBManager(db)
+            convos = await mgr.get_lead_conversations(lead_id, limit=10)
+            objections = [c.message for c in convos if any(word in c.message.lower() for word in ["not interested", "too expensive", "no budget"])]
+            return ", ".join(objections[:3]) if objections else "No objections recorded"
+
     def _create_agent(self, call_type, client_type):
         prompt = PromptTemplate.from_template(OUTBOUND_REACT_PROMPT)
         agent = create_react_agent(self.llm, self.tools, prompt)
@@ -120,3 +168,4 @@ class OutboundIntelligenceAgent(BaseNode):
 
 
 outbound_intelligence_agent = OutboundIntelligenceAgent()
+

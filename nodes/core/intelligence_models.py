@@ -1,14 +1,14 @@
-# nodes/core/intelligence_models.py
-"""
-Pydantic models for intelligence outputs
-"""
-
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Dict
-from pydantic import BaseModel, Field
-
 
 class IntelligenceOutput(BaseModel):
     """Structured output from intelligence agents"""
+    
+    # FIXED: Use Pydantic v2 ConfigDict
+    model_config = ConfigDict(
+        extra="allow",  # Allow extra fields from LLM
+        use_enum_values=True  # Use enum values instead of enum objects
+    )
     
     intent: str = Field(
         description="Detected intent (e.g., product_query, complaint, callback_request)"
@@ -58,11 +58,4 @@ class IntelligenceOutput(BaseModel):
     # Optional: Add method to convert to dict (for backward compatibility)
     def to_dict(self) -> Dict:
         """Convert to dictionary"""
-        return self.dict()
-    
-    class Config:
-        """Pydantic config"""
-        # Allow extra fields from LLM without error
-        extra = "allow"
-        # Use enum values instead of enum objects
-        use_enum_values = True
+        return self.model_dump() 

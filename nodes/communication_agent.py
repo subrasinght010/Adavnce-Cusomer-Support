@@ -53,21 +53,28 @@ class CommunicationAgent(BaseNode):
         return state
     
     async def _send_message(self, channel: ChannelType, lead_data: Dict, message: str) -> bool:
-        """Route to correct service"""
+        """Route to correct service - FIXED: Normalize channel type"""
         
-        if channel == ChannelType.EMAIL or channel == "email":
+        # Normalize to enum if string
+        if isinstance(channel, str):
+            try:
+                channel = ChannelType(channel)
+            except ValueError:
+                self.logger.error(f"Unknown channel: {channel}")
+                return False
+        
+        if channel == ChannelType.EMAIL:
             return await self._send_email(lead_data, message)
-        elif channel == ChannelType.SMS or channel == "sms":
+        elif channel == ChannelType.SMS:
             return await self._send_sms(lead_data, message)
-        elif channel == ChannelType.WHATSAPP or channel == "whatsapp":
+        elif channel == ChannelType.WHATSAPP:
             return await self._send_whatsapp(lead_data, message)
-        elif channel == ChannelType.CALL or channel == "call":
-            # Calls handled by phone_service, not here
+        elif channel == ChannelType.CALL:
             return True
         else:
             self.logger.error(f"Unknown channel: {channel}")
             return False
-    
+        
     async def _send_email(self, lead_data: Dict, message: str) -> bool:
         email = lead_data.get("email")
         if not email:

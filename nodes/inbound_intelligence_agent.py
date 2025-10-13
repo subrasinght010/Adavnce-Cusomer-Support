@@ -1,6 +1,6 @@
 # nodes/inbound_intelligence_agent.py
 """
-Inbound Intelligence with ReAct Agent
+Inbound Intelligence with ReAct Agent - FIXED
 """
 
 import json
@@ -17,7 +17,6 @@ from tools.vector_store import query_knowledge_base
 from database.crud import DBManager
 from database.db import get_db
 from prompts.system_prompts import INBOUND_REACT_PROMPT
-
 
 
 class InboundIntelligenceAgent(BaseNode):
@@ -38,29 +37,63 @@ class InboundIntelligenceAgent(BaseNode):
             Tool(
                 name="get_lead_history",
                 description="Get past conversations with this lead. Input: lead_id",
-                func=self._get_history
+                func=self._get_history_sync  # FIXED: Use sync wrapper
             )
         ]
     
     def _search_kb(self, query: str) -> str:
+        """Synchronous KB search"""
         try:
             results = query_knowledge_base(query=query, top_k=3)
             return "\n".join([f"[{r.get('metadata',{}).get('source')}]: {r.get('content')}" for r in results]) if results else "No results"
         except Exception as e:
+            self.logger.error(f"KB search failed: {e}")
             return f"Error: {e}"
     
-    def _get_history(self, lead_id: str) -> str:
+    def _get_history_sync(self, lead_id: str) -> str:
+        """FIXED: Proper sync wrapper for async DB call"""
         try:
-            # Sync wrapper for async DB call
+            # Get or create event loop safely
             import asyncio
-            async def _fetch():
-                async with get_db() as db:
-                    mgr = DBManager(db)
-                    convos = await mgr.get_lead_conversations(lead_id, limit=5)
-                    return "\n".join([f"{c.sender}: {c.message}" for c in convos]) if convos else "No history"
-            return asyncio.run(_fetch())
-        except:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No loop running, create new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(self._get_history_async(lead_id))
+                loop.close()
+                return result
+            else:
+                # Loop already running - use run_in_executor
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(self._run_in_new_loop, lead_id)
+                    return future.result(timeout=10)
+        except Exception as e:
+            self.logger.error(f"History fetch failed: {e}")
             return "Error fetching history"
+    
+    def _run_in_new_loop(self, lead_id: str) -> str:
+        """Run async function in new event loop (for nested calls)"""
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(self._get_history_async(lead_id))
+        finally:
+            loop.close()
+    
+    async def _get_history_async(self, lead_id: str) -> str:
+        """Actual async DB fetch"""
+        try:
+            async with get_db() as db:
+                mgr = DBManager(db)
+                convos = await mgr.get_lead_conversations(lead_id, limit=5)
+                return "\n".join([f"{c.sender}: {c.message}" for c in convos]) if convos else "No history"
+        except Exception as e:
+            self.logger.error(f"DB fetch error: {e}")
+            return "No history"
     
     def _create_agent(self):
         prompt = PromptTemplate.from_template(INBOUND_REACT_PROMPT)
@@ -96,7 +129,8 @@ class InboundIntelligenceAgent(BaseNode):
         try:
             cleaned = text.strip().replace("```json","").replace("```","")
             return IntelligenceOutput(**json.loads(cleaned))
-        except:
+        except Exception as e:
+            self.logger.warning(f"Parse failed: {e}")
             return self._fallback()
     
     def _fallback(self) -> IntelligenceOutput:

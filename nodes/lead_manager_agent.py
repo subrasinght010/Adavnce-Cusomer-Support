@@ -409,41 +409,58 @@ class LeadManagerAgent:
     async def save_to_db(self, state: OptimizedWorkflowState):
         """Save state updates to database (called after conversations)"""
         
+        # FIXED: Add validation before DB operations
+        if not state.get("lead_id"):
+            self.logger.error("Cannot save: missing lead_id")
+            return
+        
         try:
             async with get_db() as db:
                 db_manager = DBManager(db)
                 
-                lead_update = {
+                # FIXED: Validate data before update
+                lead_update = {}
+                
+                if state.get("lead_score") is not None:
+                    lead_update["lead_score"] = state["lead_score"]
+                
+                if state.get("lead_stage"):
+                    lead_update["status"] = state["lead_stage"]
+                
+                if state.get("detected_intent"):
+                    lead_update["last_intent"] = state["detected_intent"]
+                
+                if state.get("sentiment"):
+                    lead_update["last_sentiment"] = state["sentiment"]
+                
+                # Always update these
+                lead_update.update({
                     "last_contact_date": datetime.utcnow().isoformat(),
-                    "lead_score": state.get("lead_score"),
-                    "status": state.get("lead_stage"),
-                    "last_intent": state.get("detected_intent"),
-                    "last_sentiment": state.get("sentiment"),
                     "attempt_count": state.get("attempt_count", 0) + 1
-                }
+                })
                 
                 await db_manager.update_lead(state.get("lead_id"), lead_update)
                 
-                # Save conversation
-                conversation_record = {
-                    "lead_id": state.get("lead_id"),
-                    "session_id": state.get("session_id"),
-                    "direction": state.get("direction"),
-                    "channel": state.get("channel"),
-                    "message": state.get("current_message"),
-                    "response": state.get("intelligence_output", {}).get("response_text"),
-                    "intent": state.get("detected_intent"),
-                    "sentiment": state.get("sentiment"),
-                    "timestamp": datetime.utcnow().isoformat()
-                }
-                
-                await db_manager.save_conversation(conversation_record)
+                # Save conversation if message exists
+                if state.get("current_message"):
+                    conversation_record = {
+                        "lead_id": state.get("lead_id"),
+                        "session_id": state.get("session_id"),
+                        "direction": state.get("direction"),
+                        "channel": str(state.get("channel")),  # Convert enum to string
+                        "message": state.get("current_message"),
+                        "response": state.get("intelligence_output", {}).get("response_text"),
+                        "intent": state.get("detected_intent"),
+                        "sentiment": state.get("sentiment"),
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    
+                    await db_manager.save_conversation(conversation_record)
                 
                 logger.info(f"✓ DB updated for lead {state.get('lead_id')}")
         
         except Exception as e:
-            logger.error(f"DB save failed: {e}")
-
+            logger.error(f"DB save failed: {e}", exc_info=True)
 
 # Export singleton
 lead_manager_agent = LeadManagerAgent()

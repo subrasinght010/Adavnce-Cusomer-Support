@@ -64,7 +64,11 @@ class WorkflowRouter:
         async for event in workflow.astream(state, config):
             final_state = list(event.values())[0]
         
-        await lead_manager_agent.save_to_db(final_state)
+        # FIXED: Add null check
+        if final_state is not None:
+            await lead_manager_agent.save_to_db(final_state)
+        else:
+            logger.warning("Workflow completed with no final state")
         
         return final_state
 

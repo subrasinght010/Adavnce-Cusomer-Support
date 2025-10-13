@@ -4,7 +4,6 @@ Scheduler Agent - Deterministic scheduling without LLM
 """
 
 import asyncio
-import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from dateutil import parser
@@ -14,13 +13,13 @@ from state.workflow_state import OptimizedWorkflowState
 from database.crud import DBManager
 from database.db import get_db
 
-
 class SchedulerAgent(BaseNode):
     """Handles all call scheduling (urgent + non-urgent)"""
     
     def __init__(self):
         super().__init__("scheduler_agent")
         self.urgent_threshold_minutes = 30
+        self.active_tasks = {}  # FIXED: Track background tasks
     
     async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
         """Real-time callback scheduling from Intelligence Agent"""
@@ -37,16 +36,12 @@ class SchedulerAgent(BaseNode):
             entities = intelligence.get("entities", {})
             preferred_time = entities.get("preferred_time")
             
-            # Parse time
             scheduled_time = self._parse_time(preferred_time)
-            
-            # Check conflicts and adjust if needed
             scheduled_time = await self._check_and_resolve_conflicts(
                 state.get("lead_id"),
                 scheduled_time
             )
             
-            # Save to DB
             await self._save_to_db(
                 lead_id=state.get("lead_id"),
                 scheduled_time=scheduled_time,
@@ -55,14 +50,16 @@ class SchedulerAgent(BaseNode):
                 priority="high"
             )
             
-            # Create urgent task if <30 min
+            # FIXED: Track and store background task
             if self._is_urgent(scheduled_time):
-                asyncio.create_task(
-                    self._execute_urgent_callback(
-                        state.get("lead_id"),
-                        scheduled_time
-                    )
+                lead_id = state.get("lead_id")
+                task = asyncio.create_task(
+                    self._execute_urgent_callback(lead_id, scheduled_time)
                 )
+                self.active_tasks[lead_id] = task
+                
+                # Add task cleanup callback
+                task.add_done_callback(lambda t: self.active_tasks.pop(lead_id, None))
             
             state["callback_scheduled"] = True
             state["callback_time"] = scheduled_time.isoformat()
@@ -76,6 +73,13 @@ class SchedulerAgent(BaseNode):
         
         return state
     
+    async def cleanup_tasks(self):
+        """FIXED: Cleanup method for graceful shutdown"""
+        if self.active_tasks:
+            self.logger.info(f"Cleaning up {len(self.active_tasks)} active tasks...")
+            await asyncio.gather(*self.active_tasks.values(), return_exceptions=True)
+            self.active_tasks.clear()
+
     async def schedule_from_lead_manager(
         self,
         lead_id: str,

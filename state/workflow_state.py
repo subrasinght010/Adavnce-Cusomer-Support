@@ -4,7 +4,7 @@ EXTENDED: Added outbound fields to existing state
 Keeps all your existing inbound logic intact
 """
 
-from typing import Dict, List, Optional, Literal, Annotated
+from typing import Dict, List, Optional, Literal, Annotated, Any  # Add Any
 from typing_extensions import TypedDict
 from datetime import datetime
 from enum import Enum
@@ -114,7 +114,7 @@ class OptimizedWorkflowState(TypedDict):
     voice_file_url: Optional[str]
     
     # Lead data (existing)
-    lead_data: Dict[str, any]
+    lead_data: Dict[str, Any]
     client_type: Optional[ClientType]  # UPDATED: Use enum
     conversation_history: List[Dict[str, str]]
     
@@ -137,13 +137,13 @@ class OptimizedWorkflowState(TypedDict):
     last_attempt_timestamp: Optional[str]
     
     # Multi-touch sequence
-    touch_sequence: List[Dict[str, any]]  # [{channel, time, status, result}]
+    touch_sequence: List[Dict[str, Any]]  # [{channel, time, status, result}]
     current_touch_index: int
     next_retry_time: Optional[str]
     
     # ==================== AI PROCESSING (Existing + Extended) ====================
     
-    intelligence_output: Dict[str, any]
+    intelligence_output: Dict[str, Any]
     detected_intent: Optional[IntentType]
     intent_confidence: float
     sentiment: Optional[SentimentType]
@@ -167,7 +167,7 @@ class OptimizedWorkflowState(TypedDict):
     db_save_timestamp: Optional[str]
     
     follow_up_scheduled: bool
-    follow_up_actions: List[Dict[str, any]]
+    follow_up_actions: List[Dict[str, Any]]
     
     # ==================== ROUTING & CONTROL (Existing) ====================
     
@@ -187,7 +187,7 @@ class OptimizedWorkflowState(TypedDict):
     node_execution_times: Dict[str, float]
     total_processing_time: float
     
-    errors: List[Dict[str, any]]
+    errors: List[Dict[str, Any]]
     retry_count: int
     
     llm_calls_made: int
