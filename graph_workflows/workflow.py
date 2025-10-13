@@ -5,7 +5,7 @@ LangGraph Workflows - Corrected
 
 import logging
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.sqlite import SqliteSaver
+from utils.checkpoint import SQLiteCheckpoint
 
 from state.workflow_state import OptimizedWorkflowState, DirectionType
 from nodes.inbound_intelligence_agent import inbound_intelligence_agent
@@ -15,8 +15,7 @@ from nodes.communication_agent import communication_agent
 from nodes.lead_manager_agent import lead_manager_agent
 
 logger = logging.getLogger(__name__)
-checkpointer = SqliteSaver.from_conn_string("checkpoints.db")
-
+checkpointer = SQLiteCheckpoint(db_path="langgraph.db") 
 
 def build_inbound_workflow():
     workflow = StateGraph(OptimizedWorkflowState)

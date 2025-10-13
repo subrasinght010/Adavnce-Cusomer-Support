@@ -11,7 +11,7 @@ from langchain_core.prompts import PromptTemplate
 from nodes.core.base_node import BaseNode
 from nodes.core.intelligence_models import IntelligenceOutput
 from state.workflow_state import OptimizedWorkflowState, extract_quick_fields
-from tools.language_model import LanguageModel
+from tools.language_model import llm
 from database.crud import DBManager
 from database.db import get_db
 from prompts.system_prompts import OUTBOUND_REACT_PROMPT
@@ -21,7 +21,7 @@ class OutboundIntelligenceAgent(BaseNode):
     
     def __init__(self):
         super().__init__("outbound_intelligence")
-        self.llm = LanguageModel()
+        self.llm = llm
         self.tools = self._create_tools()
     
     def _create_tools(self):

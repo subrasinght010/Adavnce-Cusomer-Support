@@ -8,7 +8,7 @@ from datetime import datetime
 from database.crud import DBManager
 from database.db import AsyncSessionLocal
 from utils.context_builder import ContextBuilder
-from nodes.unified_intelligence_agent import UnifiedIntelligenceAgent
+from nodes. inbound_intelligence_agent import inbound_intelligence_agent
 from services.sms_service import send_sms
 from state.workflow_state import OptimizedWorkflowState
 
@@ -16,7 +16,7 @@ from state.workflow_state import OptimizedWorkflowState
 class SMSHandler:
     def __init__(self):
         self.processing_lock = asyncio.Lock()
-        self.intelligence_agent = UnifiedIntelligenceAgent()
+        self.intelligence_agent =inbound_intelligence_agent
     
     async def handle_incoming_sms(self, webhook_data: Dict) -> Dict:
         """

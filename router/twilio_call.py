@@ -6,26 +6,16 @@ These handle Twilio voice calls (both incoming and outgoing)
 """
 
 from datetime import datetime
-from services.phone_service import phone_service
-from graph_workflows.workflow import workflow_runner
-from fastapi.responses import Response as FastAPIResponse
-from fastapi import Request, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from database.crud import DBManager
-from database.db import get_db
 import logging
+
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import Response as FastAPIResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
-import logging
 
 from database.crud import DBManager
 from database.db import get_db
 from services.phone_service import phone_service
-from graph_workflows.workflow import workflow_runner
-
-logger = logging.getLogger(__name__)
+from graph_workflows.workflow import workflow_router as workflow_runner
 
 # Create router
 router = APIRouter()

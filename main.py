@@ -37,6 +37,7 @@ from database.crud import DBManager
 from database.db import get_db, init_db
 from database.models import User
 
+from nodes.lead_manager_agent import lead_manager_agent
 from utils.audio import (
     AudioValidator,
     check_silence_loop,
@@ -80,8 +81,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"❌ Database initialization failed: {e}")
         raise
+
+    lead_manager_task = asyncio.create_task(
+        lead_manager_agent.start_continuous_operation()
+    )
     
-    # Start background workers
+    print("✅ Lead Manager started (runs every 15 min)")
+    
+    yield
+    
+
     try:
         await worker_manager.start_all_workers()
         print("✅ Background workers started")
@@ -89,13 +98,15 @@ async def lifespan(app: FastAPI):
         print(f"⚠️  Warning: Some workers failed to start: {e}")
         import traceback
         traceback.print_exc()
-    
+
     print("\n" + "=" * 60)
     print("✅ Application Ready!")
     print("=" * 60 + "\n")
     
     yield
-    
+        # SHUTDOWN
+    lead_manager_task.cancel()
+    print("✅ Shutdown lead manager")
     # Shutdown
     print("\n" + "=" * 60)
     print("🛑 Application Shutting Down...")

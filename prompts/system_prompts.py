@@ -1,4 +1,3 @@
-# prompts/system_prompts.py
 """
 Centralized prompts including ReAct templates
 """
@@ -9,7 +8,10 @@ Centralized prompts including ReAct templates
 
 INBOUND_REACT_PROMPT = """Answer user questions using available tools.
 
-TOOLS:
+Available Tools:
+{tool_names}
+
+Tool Details:
 {tools}
 
 Format:
@@ -41,7 +43,10 @@ Question: {input}
 
 OUTBOUND_REACT_PROMPT = """Sales agent for {call_type} call to {client_type} client. Use tools to gather info, then craft message.
 
-TOOLS:
+Available Tools:
+{tool_names}
+
+Tool Details:
 {tools}
 
 Format:
@@ -75,7 +80,14 @@ OUTBOUND_RE_ENGAGEMENT_PROMPT = """Casual re-engagement, non-pushy."""
 OUTBOUND_CLOSING_CALL_PROMPT = """Professional closing, create urgency."""
 
 
+# ============================================================================
+# PROMPT SELECTION HELPER
+# ============================================================================
+
 def get_prompt_for_context(direction: str, call_type: str = None, client_type: str = None) -> str:
+    """
+    Returns the appropriate prompt template based on the call direction and type.
+    """
     if direction == "inbound":
         return INBOUND_REACT_PROMPT
     elif direction == "outbound":
