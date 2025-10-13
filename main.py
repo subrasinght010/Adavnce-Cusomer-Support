@@ -228,7 +228,7 @@ async def unified_home(
         return HTMLResponse("User not found", status_code=404)
 
     try:
-        if Settings.ENABLE_TTS in [False, "False", "false"]:
+        if Settings.ENABLE_TTS not in [False, "False", "false"]:
             print("⚠️  TTS disabled → loading index.html")
             template_name = "index.html"
         else:

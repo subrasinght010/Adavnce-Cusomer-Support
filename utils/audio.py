@@ -273,14 +273,14 @@ async def process_audio(
         
         # Run incoming listener (fast path check)
         print(f"🔄 Processing with AI...")
-        state = await incoming_listener_node.execute(state)
+        state = await inbound_intelligence_agent.execute(state)
         print(f"✅ Incoming listener done. Simple: {state.get('is_simple_message')}, Cache hit: {state.get('cache_hit')}")
         
         # Check if fast path was used
         if not (state.get("is_simple_message") or state.get("cache_hit")):
             print("→ Complex query, running full AI processing")
             # Run full AI processing
-            state = await unified_intelligence_agent.execute(state)
+            state = await inbound_intelligence_agent.execute(state)
         
         # === STEP 3: EXTRACT AI RESPONSE ===
         
