@@ -33,7 +33,7 @@ async def get_checkpointer():
 
 def build_inbound_workflow(checkpointer):
     """
-    Inbound: Intelligence → Message Format → Conditional Scheduler
+    Inbound: Intelligence → Message Format → Conditional Scheduler/Actions
     """
     workflow = StateGraph(OptimizedWorkflowState)
     
@@ -46,7 +46,7 @@ def build_inbound_workflow(checkpointer):
     
     workflow.add_conditional_edges(
         "message_intelligence",
-        should_schedule,
+        should_execute_actions,
         {
             True: "scheduler",
             False: END
@@ -57,18 +57,43 @@ def build_inbound_workflow(checkpointer):
     return workflow.compile(checkpointer=checkpointer)
 
 
-def should_schedule(state: OptimizedWorkflowState) -> bool:
-    """Check if scheduling needed"""
+def should_execute_actions(state: OptimizedWorkflowState) -> bool:
+    """
+    Check if any actions need to be executed
+    Updated to handle all action types
+    """
     intelligence = state.get("intelligence_output", {})
     actions = intelligence.get("next_actions", [])
     
-    schedule_triggers = [
+    # All action types that need processing
+    action_triggers = [
+        # Scheduling actions
         "schedule_callback",
         "schedule_followup",
-        "delayed_send"
+        "delayed_send",
+        
+        # Communication actions
+        "send_email",
+        "send_sms",
+        "send_whatsapp",
+        
+        # Escalation actions
+        "escalate_to_human",
+        
+        # Other actions
+        "create_ticket",
+        "update_lead",
+        "send_details"
     ]
     
-    return any(action in actions for action in schedule_triggers)
+    has_actions = any(action in actions for action in action_triggers)
+    
+    if has_actions:
+        logger.info(f"✓ Actions detected: {actions}")
+    else:
+        logger.info(f"✗ No actions to execute")
+    
+    return has_actions
 
 
 def build_outbound_workflow(checkpointer):
@@ -121,14 +146,26 @@ class WorkflowRouter:
         
         config = {"configurable": {"thread_id": f"thread_{direction}"}}
         
+        logger.info(f"{'='*70}")
+        logger.info(f"Starting {direction} workflow")
+        logger.info(f"Lead: {state.get('lead_id')}, Message: {state.get('current_message', '')[:50]}")
+        logger.info(f"{'='*70}")
+        
         final_state = None
         async for event in workflow.astream(state, config):
             final_state = list(event.values())[0]
         
         if final_state:
-            await lead_manager_agent.save_to_db(final_state)
+            # Save to database
+            try:
+                await lead_manager_agent.save_to_db(final_state)
+                logger.info("✓ Workflow completed and saved to DB")
+            except Exception as e:
+                logger.error(f"Failed to save to DB: {e}", exc_info=True)
         else:
-            logger.warning("Workflow completed with no final state")
+            logger.warning("⚠ Workflow completed with no final state")
+        
+        logger.info(f"{'='*70}\n")
         
         return final_state
     

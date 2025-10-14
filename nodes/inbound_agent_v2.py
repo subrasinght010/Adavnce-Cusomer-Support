@@ -1,4 +1,9 @@
-"""Inbound Intelligence Agent - Refactored"""
+# nodes/inbound_agent_v2.py
+"""
+Inbound Intelligence Agent - Refactored with Multi-Intent Support
+Uses base agent for ReAct loop and entity extraction
+"""
+
 from datetime import datetime
 from langchain_core.tools import Tool
 from nodes.core.base_intelligence_agent import BaseIntelligenceAgent
@@ -10,107 +15,151 @@ from database.crud import DBManager
 from database.db import get_db
 from prompts.robust_system_prompts import get_inbound_prompt
 from prompts.response_templates import get_response
+import asyncio
+import json
 
 
 class InboundAgent(BaseIntelligenceAgent):
     
     def __init__(self):
         super().__init__("inbound_intelligence", llm)
+        self.logger.info("✓ InboundAgent initialized with multi-intent support")
+    
+    # ========================================================================
+    # TOOL DEFINITIONS
+    # ========================================================================
     
     def _create_tools(self):
-        self.logger.info("Initializing 9 tools")
+        """Define inbound-specific tools"""
+        self.logger.info("Initializing 9 inbound tools")
         return [
-            Tool(name="search_knowledge_base", description="Search KB. Input: query", func=self._search_kb),
-            Tool(name="get_lead_history", description="Get history. Input: lead_id", func=self._get_history),
-            Tool(name="check_ticket_status", description="Check ticket. Input: ticket_id", func=self._check_ticket),
-            Tool(name="schedule_callback", description="Schedule callback. Input: lead_id|datetime|reason", func=self._schedule_callback),
-            Tool(name="send_details", description="Send details. Input: lead_id|channel|content_type", func=self._send_details),
-            Tool(name="escalate_to_human", description="Escalate. Input: reason", func=self._escalate),
-            Tool(name="send_email_now", description="Queue email. Input: email|content_type", func=self._queue_email),
-            Tool(name="send_sms_now", description="Queue SMS. Input: phone|content_type", func=self._queue_sms),
-            Tool(name="send_whatsapp_now", description="Queue WhatsApp. Input: phone|content_type", func=self._queue_whatsapp),
+            Tool(
+                name="search_knowledge_base",
+                description="Search company knowledge base for product info, policies, pricing. Input: search query string",
+                func=self._search_kb
+            ),
+            Tool(
+                name="get_lead_history",
+                description="Get past conversation history with lead. Input: lead_id",
+                func=self._get_history
+            ),
+            Tool(
+                name="check_ticket_status",
+                description="Check support ticket status. Input: ticket_id or lead_id",
+                func=self._check_ticket
+            ),
+            Tool(
+                name="schedule_callback",
+                description="Schedule callback for lead. Input: lead_id|datetime|reason (pipe-separated)",
+                func=self._schedule_callback
+            ),
+            Tool(
+                name="send_details",
+                description="Queue details to be sent. Input: lead_id|channel|content_type (channel: email/sms/whatsapp)",
+                func=self._send_details
+            ),
+            Tool(
+                name="escalate_to_human",
+                description="Create escalation ticket for human agent. Input: reason and urgency",
+                func=self._escalate
+            ),
+            Tool(
+                name="send_email_now",
+                description="Queue email immediately. Input: email|content_type (e.g., user@test.com|pricing)",
+                func=self._queue_email
+            ),
+            Tool(
+                name="send_sms_now",
+                description="Queue SMS immediately. Input: phone|content_type",
+                func=self._queue_sms
+            ),
+            Tool(
+                name="send_whatsapp_now",
+                description="Queue WhatsApp message. Input: phone|content_type",
+                func=self._queue_whatsapp
+            )
         ]
     
+    # ========================================================================
+    # PROMPT GENERATION
+    # ========================================================================
+    
     def _get_system_prompt(self, **kwargs) -> str:
-        return get_inbound_prompt(**kwargs)
+        """Generate inbound-specific system prompt"""
+        return get_inbound_prompt(
+            conversation_history=kwargs.get('conversation_history', ''),
+            tools_description=kwargs.get('tools_description', ''),
+            user_message=kwargs.get('user_message', ''),
+            lead_id=kwargs.get('lead_id', ''),
+            lead_name=kwargs.get('lead_name', 'Unknown'),
+            channel=kwargs.get('channel', 'unknown')
+        )
     
     def _extract_prompt_vars(self, state: dict) -> dict:
+        """Extract variables needed for prompt from state"""
         return {
-            'user_message': state.get('current_message'),
+            'user_message': state.get('current_message', ''),
+            'lead_id': state.get('lead_id', ''),
             'lead_name': state.get('lead_data', {}).get('name', 'Unknown'),
-            'lead_id': state.get('lead_id', 'unknown'),
-            'channel': state.get('channel', 'unknown'),
+            'channel': state.get('channel', 'unknown')
         }
     
-    def _validate_entities(self, intelligence: IntelligenceOutput, user_message: str) -> IntelligenceOutput:
-        """Validate and clear hallucinated entities"""
-        self.logger.debug("Validating entities")
-        entities = intelligence.entities or {}
-        
-        if 'callback' in intelligence.intent.lower():
-            time_keywords = ['at', 'pm', 'am', ':00']
-            if not any(k in user_message.lower() for k in time_keywords) and entities.get('callback_time'):
-                self.logger.info("Callback time not specified in message, requesting clarification")
-                entities['callback_time'] = None
-                intelligence.needs_clarification = True
-                intelligence.clarification_question = "What time works best?"
-                intelligence.response_text = "What time works best for your callback?"
-                intelligence.next_actions = []
-        
-        if 'email' in intelligence.intent.lower() and entities.get('email') and '@' not in user_message:
-            self.logger.debug("Email not in message, clearing hallucinated email")
-            entities['email'] = None
-        
-        if entities.get('phone') and not any(c.isdigit() for c in user_message):
-            self.logger.debug("Phone not in message, clearing hallucinated phone")
-            entities['phone'] = None
-        
-        intelligence.entities = entities
-        return intelligence
+    # ========================================================================
+    # POST-PROCESSING
+    # ========================================================================
     
-    def _apply_response_template(self, intelligence: IntelligenceOutput, state: dict) -> IntelligenceOutput:
-        """Apply response templates"""
-        self.logger.debug(f"Applying template for intent: {intelligence.intent}")
+    def _post_process(self, intelligence: IntelligenceOutput, user_message: str, state: dict) -> IntelligenceOutput:
+        """Post-process with template responses"""
+        
+        # Call parent post-process first
+        intelligence = super()._post_process(intelligence, user_message, state)
+        
+        # Apply response templates for common scenarios
         try:
-            intent = intelligence.intent.lower()
-            entities = intelligence.entities or {}
-            lead = state.get('lead_data', {})
+            if intelligence.needs_clarification and not intelligence.response_text:
+                intelligence.response_text = intelligence.clarification_question or "Could you provide more details?"
             
-            if 'callback' in intent:
-                if entities.get('callback_time'):
-                    intelligence.response_text = get_response('callback_scheduled', 
-                        time=entities['callback_time'], name=lead.get('name', 'Our team'), phone=lead.get('phone', 'your number'))
-                else:
-                    intelligence.response_text = get_response('callback_need_time')
-            elif 'email' in intent:
-                if entities.get('email'):
-                    intelligence.response_text = get_response('email_sent', 
-                        content_type=entities.get('content_type', 'info'), email=entities['email'])
-                else:
-                    intelligence.response_text = get_response('email_need_address')
-            elif intelligence.needs_clarification:
-                intelligence.response_text = get_response('clarification', 
-                    question=intelligence.clarification_question or 'what you need')
+            # Template for email send without address
+            if "send_details_email" in intelligence.intents and not intelligence.entities.get("email"):
+                intelligence.response_text = get_response('email_need_address')
+                intelligence.needs_clarification = True
+                intelligence.clarification_question = "What email address should I use?"
+            
+            # Template for callback without time
+            elif "callback_request" in intelligence.intents and not intelligence.entities.get("callback_time"):
+                intelligence.response_text = get_response('callback_need_time')
+                intelligence.needs_clarification = True
+                intelligence.clarification_question = "What time would you like us to call you back?"
+            
         except Exception as e:
-            self.logger.error(f"Template error: {e}", exc_info=True)
+            self.logger.error(f"Template application error: {e}", exc_info=True)
         
         return intelligence
     
-    # Tool implementations
+    # ========================================================================
+    # TOOL IMPLEMENTATIONS
+    # ========================================================================
+    
     def _search_kb(self, query: str) -> str:
+        """Search knowledge base"""
         self.logger.info(f"Searching KB: {query[:50]}...")
         try:
             results = query_knowledge_base(query=query, top_k=3)
-            result_text = "\n".join([f"[{r.get('metadata',{}).get('source')}]: {r.get('content')}" for r in results]) if results else "No results"
-            self.logger.info(f"KB search returned {len(results) if results else 0} results")
-            return result_text
+            if results:
+                result_text = "\n".join([
+                    f"[{r.get('metadata',{}).get('source', 'Unknown')}]: {r.get('content', '')[:200]}"
+                    for r in results
+                ])
+                self.logger.info(f"KB returned {len(results)} results")
+                return result_text
+            return "No relevant information found in knowledge base."
         except Exception as e:
             self.logger.error(f"KB search error: {e}")
-            return f"Error: {e}"
+            return f"Error searching knowledge base: {str(e)}"
     
     def _get_history(self, lead_id: str) -> str:
+        """Get lead conversation history (sync wrapper)"""
         self.logger.info(f"Fetching history for lead: {lead_id}")
-        import asyncio
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -119,80 +168,147 @@ class InboundAgent(BaseIntelligenceAgent):
             return result
         except Exception as e:
             self.logger.error(f"History fetch failed: {e}")
-            return "No history"
+            return "No history available"
     
     async def _fetch_history(self, lead_id: str) -> str:
+        """Async fetch history"""
         try:
             async with get_db() as db:
                 mgr = DBManager(db)
-                convos = await mgr.get_lead_conversations(lead_id, limit=5)
-                self.logger.info(f"Retrieved {len(convos) if convos else 0} past conversations")
-                return "\n".join([f"{c.sender}: {c.message}" for c in convos]) if convos else "No history"
+                convos = await mgr.get_conversations_by_lead(lead_id, limit=5)
+                if convos:
+                    history = "\n".join([
+                        f"[{c.timestamp}] {c.sender}: {c.message}"
+                        for c in convos
+                    ])
+                    return f"Recent history:\n{history}"
+                return "No previous conversations found"
         except Exception as e:
-            self.logger.error(f"DB error: {e}")
-            return "Error"
+            self.logger.error(f"Async history fetch error: {e}")
+            return f"Error: {str(e)}"
     
     def _check_ticket(self, ticket_id: str) -> str:
+        """Check ticket status"""
         self.logger.info(f"Checking ticket: {ticket_id}")
-        return f"Ticket {ticket_id}: No open tickets"
+        # Mock implementation - replace with real ticket system
+        return f"Ticket {ticket_id}: Status = Open, Priority = Medium, Assigned to: Support Team"
     
     def _schedule_callback(self, input_str: str) -> str:
+        """Schedule callback"""
         self.logger.info(f"Scheduling callback: {input_str}")
-        parts = input_str.split('|')
-        if len(parts) < 2 or not parts[1]:
-            self.logger.warning("Callback time missing")
-            return "ERROR: Time required"
-        self.logger.info(f"Callback scheduled for {parts[1]}")
-        return f"Callback scheduled for {parts[1]}"
+        try:
+            parts = input_str.split("|")
+            if len(parts) >= 3:
+                lead_id, time, reason = parts[0], parts[1], parts[2]
+                # TODO: Implement actual scheduling logic
+                return f"Callback scheduled for lead {lead_id} at {time}. Reason: {reason}"
+            return "Error: Invalid format. Use lead_id|datetime|reason"
+        except Exception as e:
+            self.logger.error(f"Callback scheduling error: {e}")
+            return f"Error: {str(e)}"
     
     def _send_details(self, input_str: str) -> str:
+        """Queue details to be sent"""
         self.logger.info(f"Sending details: {input_str}")
-        parts = input_str.split('|')
-        if len(parts) < 3:
-            self.logger.warning("Missing channel or content type")
-            return "ERROR: Missing channel/content"
-        self.logger.info(f"Details sent: {parts[2]} via {parts[1]}")
-        return f"{parts[2]} sent via {parts[1]}"
+        try:
+            parts = input_str.split("|")
+            if len(parts) >= 3:
+                lead_id, channel, content_type = parts[0], parts[1], parts[2]
+                
+                # Add to pending sends
+                if not hasattr(self, '_pending_sends'):
+                    self._pending_sends = []
+                
+                self._pending_sends.append({
+                    "lead_id": lead_id,
+                    "channel": channel,
+                    "content_type": content_type,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+                
+                return f"Details queued to send via {channel}"
+            return "Error: Invalid format. Use lead_id|channel|content_type"
+        except Exception as e:
+            self.logger.error(f"Send details error: {e}")
+            return f"Error: {str(e)}"
     
     def _escalate(self, reason: str) -> str:
-        self.logger.warning(f"Escalating to human: {reason}")
-        return f"Escalated: {reason}"
-
-    def _queue_email(self, tool_input: str) -> str:
+        """Create escalation ticket"""
+        self.logger.info(f"Escalating: {reason}")
         try:
-            email, content_type = tool_input.split('|')
-            self._pending_sends.append({"channel": "email", "to": email, "content_type": content_type, "queued_at": datetime.utcnow().isoformat()})
-            return f"✓ Will send {content_type} to {email} at end of call"
+            # TODO: Implement actual escalation logic
+            ticket_id = f"ESC-{datetime.utcnow().timestamp()}"
+            return f"Escalation ticket created: {ticket_id}. Reason: {reason}. Priority: High"
         except Exception as e:
-            return f"Error: {e}"
+            self.logger.error(f"Escalation error: {e}")
+            return f"Error: {str(e)}"
     
-    def _queue_sms(self, tool_input: str) -> str:
+    def _queue_email(self, input_str: str) -> str:
+        """Queue email"""
+        self.logger.info(f"Queueing email: {input_str}")
         try:
-            phone, content_type = tool_input.split('|')
-            self._pending_sends.append({"channel": "sms", "to": phone, "content_type": content_type, "queued_at": datetime.utcnow().isoformat()})
-            return f"✓ Will text {content_type} to {phone} at end of call"
+            parts = input_str.split("|")
+            email = parts[0] if len(parts) > 0 else ""
+            content_type = parts[1] if len(parts) > 1 else "general"
+            
+            if not hasattr(self, '_pending_sends'):
+                self._pending_sends = []
+            
+            self._pending_sends.append({
+                "channel": "email",
+                "email": email,
+                "content_type": content_type,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            
+            return f"Email queued to {email}"
         except Exception as e:
-            return f"Error: {e}"
+            return f"Error: {str(e)}"
     
-    def _queue_whatsapp(self, tool_input: str) -> str:
+    def _queue_sms(self, input_str: str) -> str:
+        """Queue SMS"""
+        self.logger.info(f"Queueing SMS: {input_str}")
         try:
-            phone, content_type = tool_input.split('|')
-            self._pending_sends.append({"channel": "whatsapp", "to": phone, "content_type": content_type, "queued_at": datetime.utcnow().isoformat()})
-            return f"✓ Will WhatsApp {content_type} to {phone} at end of call"
+            parts = input_str.split("|")
+            phone = parts[0] if len(parts) > 0 else ""
+            content_type = parts[1] if len(parts) > 1 else "general"
+            
+            if not hasattr(self, '_pending_sends'):
+                self._pending_sends = []
+            
+            self._pending_sends.append({
+                "channel": "sms",
+                "phone": phone,
+                "content_type": content_type,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            
+            return f"SMS queued"
         except Exception as e:
-            return f"Error: {e}"
+            return f"Error: {str(e)}"
+    
+    def _queue_whatsapp(self, input_str: str) -> str:
+        """Queue WhatsApp message"""
+        self.logger.info(f"Queueing WhatsApp: {input_str}")
+        try:
+            parts = input_str.split("|")
+            phone = parts[0] if len(parts) > 0 else ""
+            content_type = parts[1] if len(parts) > 1 else "general"
+            
+            if not hasattr(self, '_pending_sends'):
+                self._pending_sends = []
+            
+            self._pending_sends.append({
+                "channel": "whatsapp",
+                "phone": phone,
+                "content_type": content_type,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            
+            return f"WhatsApp message queued"
+        except Exception as e:
+            return f"Error: {str(e)}"
 
-    async def execute(self, state: OptimizedWorkflowState) -> OptimizedWorkflowState:
-        self._pending_sends = []
-        state = await super().execute(state)
-        
-        if self._pending_sends:
-            if "pending_sends" not in state:
-                state["pending_sends"] = []
-            state["pending_sends"].extend(self._pending_sends)
-            self.logger.info(f"Added {len(self._pending_sends)} pending sends")
-        
-        return state
 
-
+# Export singleton
 inbound_agent = InboundAgent()

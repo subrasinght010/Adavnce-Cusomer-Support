@@ -1,54 +1,35 @@
+# prompts/response_templates.py
 """
-Response templates for controlled agent outputs
+Response templates for common scenarios
+Ensures consistent messaging
 """
 
 RESPONSE_TEMPLATES = {
-    "callback_scheduled": "Perfect! I've scheduled a callback for {time}. {name} from our team will call you at {phone}.",
+    "greeting": "Hello! How can I assist you today?",
     
-    "callback_need_time": "I'd be happy to schedule a callback. What time works best for you?",
+    "email_need_address": "I'd be happy to email that to you! What email address should I use?",
     
-    "email_sent": "Done! I've sent the {content_type} to {email}. Check your inbox in 2-3 minutes.",
+    "callback_need_time": "I'll schedule a callback for you. What time works best?",
     
-    "email_need_address": "I can send that to your email. What's your email address?",
+    "sms_confirm": "I'll send that to you via SMS right away.",
     
-    "pricing_query": "Our {product} starts at ${price}/month. Want me to send detailed pricing to your email?",
+    "whatsapp_confirm": "I'll send that to you on WhatsApp.",
     
-    "complaint_urgent": "I understand this is frustrating. Let me escalate this to a specialist who can help immediately.",
+    "escalation_confirm": "I understand your concern. I'm escalating this to a senior agent who will contact you shortly.",
     
-    "complaint_normal": "I'm sorry to hear that. Let me look into this and get back to you shortly.",
+    "clarification": "Could you provide more details about {question}?",
     
-    "escalation": "Connecting you with a specialist now. They'll be able to assist you better.",
+    "multi_action_confirm": "Got it! I'll {actions}. Is there anything else I can help with?",
     
-    "clarification": "To help you better, could you clarify: {question}?",
-    
-    "order_status": "Your order #{order_id} is {status}. Expected delivery: {date}.",
-    
-    "technical_issue": "Let me check our system status. Meanwhile, have you tried {troubleshooting_step}?",
-    
-    "out_of_scope": "That's outside my expertise. Let me connect you with the right team.",
+    "error": "I apologize, but I'm having trouble processing that request. Let me connect you with a human agent.",
 }
 
 
 def get_response(template_key: str, **kwargs) -> str:
-    """Get templated response with variables"""
-    template = RESPONSE_TEMPLATES.get(template_key, "How can I help you today?")
+    """Get response template with variable substitution"""
+    template = RESPONSE_TEMPLATES.get(template_key, RESPONSE_TEMPLATES["error"])
+    
     try:
         return template.format(**kwargs)
     except KeyError:
         return template
-
-
-# Add to system prompt
-TEMPLATE_INSTRUCTION = """
-=== RESPONSE CONTROL ===
-For common scenarios, use these exact response patterns:
-
-1. Callback scheduled: "Perfect! I've scheduled a callback for [time]. [Agent name] will call you."
-2. Need time: "I'd be happy to schedule a callback. What time works best for you?"
-3. Email sent: "Done! I've sent the [content] to [email]. Check your inbox in 2-3 minutes."
-4. Need email: "I can send that to your email. What's your email address?"
-5. Urgent complaint: "I understand this is frustrating. Escalating to a specialist now."
-6. Clarification: "To help you better, could you clarify: [question]?"
-
-Keep responses natural, under 50 words, and action-oriented.
-"""

@@ -8,7 +8,6 @@ from typing_extensions import TypedDict
 from datetime import datetime
 from enum import Enum
 
-
 # ============================================================================
 # ENUMS
 # ============================================================================
@@ -81,7 +80,6 @@ class LeadStage(str, Enum):
 # ============================================================================
 # STATE SCHEMA
 # ============================================================================
-
 class OptimizedWorkflowState(TypedDict):
     # Session
     session_id: str
@@ -115,10 +113,12 @@ class OptimizedWorkflowState(TypedDict):
     current_touch_index: int
     next_retry_time: Optional[str]
     
-    # AI processing
+    # AI processing - UPDATED
     intelligence_output: Dict[str, Any]
-    detected_intent: Optional[IntentType]
+    detected_intent: Optional[IntentType]  # Keep for backward compatibility
+    detected_intents: List[str]  # NEW: Support multiple intents
     intent_confidence: float
+    extracted_entities: Dict[str, Any]  # NEW: Centralized entity storage
     sentiment: Optional[SentimentType]
     urgency: Optional[UrgencyLevel]
     
@@ -137,7 +137,7 @@ class OptimizedWorkflowState(TypedDict):
     follow_up_scheduled: bool
     follow_up_actions: List[Dict[str, Any]]
     
-    # NEW: Pending sends
+    # Pending sends
     pending_sends: List[Dict[str, Any]]
     
     # Routing
@@ -159,9 +159,30 @@ class OptimizedWorkflowState(TypedDict):
     cache_saves_made: int
 
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
+def extract_quick_fields(state: OptimizedWorkflowState) -> OptimizedWorkflowState:
+    """Extract quick-access fields from intelligence_output"""
+    if state.get("intelligence_output"):
+        intel = state["intelligence_output"]
+        
+        # Handle both single and multiple intents
+        intents = intel.get("intents", [])
+        if not intents:
+            # Fallback to old format
+            single_intent = intel.get("intent")
+            intents = [single_intent] if single_intent else ["general_inquiry"]
+        
+        state["detected_intent"] = intents[0]  # Primary intent (backward compatible)
+        state["detected_intents"] = intents  # All intents (new)
+        state["intent_confidence"] = intel.get("intent_confidence", 0.0)
+        state["extracted_entities"] = intel.get("entities", {})  # NEW
+        state["sentiment"] = intel.get("sentiment")
+        state["urgency"] = intel.get("urgency")
+        state["needs_rag"] = intel.get("used_knowledge_base", False)
+        state["escalate_to_human"] = intel.get("requires_human", False)
+        state["pending_actions"] = intel.get("next_actions", [])
+    
+    return state
+
 
 def create_initial_state(
     lead_id: str,
@@ -204,7 +225,9 @@ def create_initial_state(
         next_retry_time=None,
         intelligence_output={},
         detected_intent=None,
+        detected_intents=[],  # NEW
         intent_confidence=0.0,
+        extracted_entities={},  # NEW
         sentiment=None,
         urgency=None,
         communication_sent=False,
@@ -218,7 +241,7 @@ def create_initial_state(
         db_save_timestamp=None,
         follow_up_scheduled=False,
         follow_up_actions=[],
-        pending_sends=[],  # NEW
+        pending_sends=[],
         is_simple_message=False,
         cache_hit=False,
         cache_key=None,
@@ -234,16 +257,3 @@ def create_initial_state(
         llm_calls_made=0,
         cache_saves_made=0
     )
-
-
-def extract_quick_fields(state: OptimizedWorkflowState) -> OptimizedWorkflowState:
-    if state.get("intelligence_output"):
-        intel = state["intelligence_output"]
-        state["detected_intent"] = intel.get("intent")
-        state["intent_confidence"] = intel.get("intent_confidence", 0.0)
-        state["sentiment"] = intel.get("sentiment")
-        state["urgency"] = intel.get("urgency")
-        state["needs_rag"] = intel.get("used_knowledge_base", False)
-        state["escalate_to_human"] = intel.get("requires_human", False)
-        state["pending_actions"] = intel.get("next_actions", [])
-    return state
