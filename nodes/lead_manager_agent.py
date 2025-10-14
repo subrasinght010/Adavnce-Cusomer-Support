@@ -10,7 +10,7 @@ from typing import List, Dict
 
 from database.db import get_db
 from database.crud import DBManager
-from state.workflow_state import OptimizedWorkflowState
+from state.workflow_state import DirectionType, OptimizedWorkflowState
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,6 @@ class LeadManagerAgent:
     
     async def save_to_db(self, state: OptimizedWorkflowState):
         """Save workflow state to database"""
-        
         if not state.get("lead_id"):
             self.logger.error("Cannot save: missing lead_id")
             return
@@ -39,7 +38,7 @@ class LeadManagerAgent:
                 
                 # Update lead
                 lead_update = {
-                    "last_contacted_at": datetime.utcnow(),
+                    "last_contacted_at": datetime.now(),
                     "engagement_score": state.get("engagement_score", 0)
                 }
                 
@@ -48,39 +47,63 @@ class LeadManagerAgent:
                 
                 await db_manager.update_lead(lead_id, lead_update)
                 
-                # Save user message
-                if state.get("current_message"):
-                    await db_manager.add_conversation(
-                        lead_id=lead_id,
-                        message=state["current_message"],
-                        channel=str(state.get("channel", "unknown")),
-                        sender="user",
-                        message_id=state.get("message_id"),
-                        intent_detected=state.get("detected_intent")
-                    )
+                # Determine direction and save accordingly
+                direction = state.get("direction")
+                ts = datetime.now()
+                if direction == DirectionType.INBOUND:
+                    # INBOUND: Save user message first, then AI response
+                    if state.get("current_message"):
+                        await db_manager.add_conversation(
+                            lead_id=lead_id,
+                            message=state["current_message"],
+                            channel=str(state.get("channel", "unknown")),
+                            sender="user",
+                            message_id=state.get("message_id"),
+                            intent_detected=state.get("detected_intent"),
+                            timestamp=ts  # explicitly pass timestamp
+                        )
+                    
+                    # Then save AI response
+                    intelligence = state.get("intelligence_output", {})
+                    if intelligence.get("response_text"):
+                        await db_manager.add_conversation(
+                            lead_id=lead_id,
+                            message=intelligence["response_text"],
+                            channel=str(state.get("channel", "unknown")),
+                            sender="ai",
+                            intent_detected=state.get("detected_intent"),
+                            cost=state.get("total_cost", 0.0),
+                            campaign_id=state.get("campaign_id"),
+                            timestamp=ts + timedelta(seconds=1) # explicitly pass timestamp
+                        )
                 
-                # Save AI response
-                intelligence = state.get("intelligence_output", {})
-                if intelligence.get("response_text"):
-                    await db_manager.add_conversation(
-                        lead_id=lead_id,
-                        message=intelligence["response_text"],
-                        channel=str(state.get("channel", "unknown")),
-                        sender="ai",
-                        intent_detected=state.get("detected_intent"),
-                        cost=state.get("total_cost", 0.0),
-                        campaign_id=state.get("campaign_id")
-                    )
+                else:  # OUTBOUND
+                    # OUTBOUND: Only save AI message
+                    intelligence = state.get("intelligence_output", {})
+                    if intelligence.get("response_text"):
+                        await db_manager.add_conversation(
+                            lead_id=lead_id,
+                            message=intelligence["response_text"],
+                            channel=str(state.get("channel", "unknown")),
+                            sender="ai",
+                            intent_detected=state.get("detected_intent"),
+                            cost=state.get("total_cost", 0.0),
+                            campaign_id=state.get("campaign_id")
+                        )
                 
                 self.logger.info(f"✓ State saved for lead {lead_id}")
         
         except Exception as e:
             self.logger.error(f"Save failed: {e}", exc_info=True)
-    
+
+        
+
     # ============================================================================
     # FOLLOW-UP MANAGEMENT
     # ============================================================================
-    
+
+
+
     async def process_due_followups(self):
         """Process pending follow-ups (call from background worker)"""
         
@@ -168,7 +191,7 @@ class LeadManagerAgent:
             return  # End of sequence
         
         delay = delay_map.get(current_followup.channel, timedelta(hours=24))
-        next_time = datetime.utcnow() + delay
+        next_time = datetime.now() + delay
         
         await db_manager.create_followup(
             lead_id=lead.id,
@@ -227,7 +250,7 @@ class LeadManagerAgent:
             async with get_db() as db:
                 db_manager = DBManager(db)
                 
-                scheduled_time = datetime.utcnow() + timedelta(hours=hours_delay)
+                scheduled_time = datetime.now() + timedelta(hours=hours_delay)
                 
                 followup = await db_manager.create_followup(
                     lead_id=lead_id,

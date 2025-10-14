@@ -201,10 +201,20 @@ class DBManager:
         message_id: str = None,
         intent_detected: str = None,
         cost: float = 0.0,
-        campaign_id: int = None
+        campaign_id: int = None,
+        timestamp: datetime = None  # <-- add this
     ):
         """Create conversation record"""
         try:
+            # Determine proper delivery status
+            if sender == "user":
+                delivery_status = "sent"
+            elif sender == "ai":
+                delivery_status = "delivered"
+            else:
+                delivery_status = "unknown"
+                logger.warning(f"Unknown sender type '{sender}' for conversation on lead {lead_id}")
+
             conv = Conversation(
                 lead_id=lead_id,
                 message=message,
@@ -215,21 +225,27 @@ class DBManager:
                 intent_detected=intent_detected,
                 cost=cost,
                 campaign_id=campaign_id,
-                delivery_status="sent" if sender == "ai" else "received"
+                delivery_status=delivery_status,
+                timestamp=timestamp or datetime.now()# <-- use provided or current time
             )
+
             self.session.add(conv)
             await self.session.commit()
             await self.session.refresh(conv)
-            
-            # Update lead engagement
+
+            # Update lead engagement metrics
             await self.update_lead_engagement(lead_id)
-            
-            logger.info(f"Conversation saved: lead={lead_id}, channel={channel}, sender={sender}")
+
+            logger.info(
+                f"Conversation saved: lead={lead_id}, channel={channel}, sender={sender}, status={delivery_status}"
+            )
             return conv
+
         except Exception as e:
             logger.error(f"Failed to save conversation: {e}", exc_info=True)
             await self.session.rollback()
             raise
+
 
     async def create_conversation(self, data: dict):
         """Wrapper accepting dict"""

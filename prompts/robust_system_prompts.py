@@ -30,7 +30,7 @@ Action Input: your_input_here
 === JSON RESPONSE FORMAT ===
 When answering (without using tools), respond with ONLY this JSON structure:
 {{
-    "intent": "product_query|callback_request|send_details_email|send_details_sms|send_details_whatsapp|complaint|escalation|general_inquiry|order_status|account_issue",
+    "intent": "greeting|product_query|callback_request|send_details_email|send_details_sms|send_details_whatsapp|complaint|escalation|general_inquiry|order_status|account_issue",
     "intent_confidence": 0.95,
     "entities": {{
         "callback_time": null,

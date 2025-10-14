@@ -44,6 +44,7 @@ class TestInboundWorkflow:
         ]
         
         for test in test_cases:
+            # import ipdb; ipdb.set_trace()
             try:
                 await test()
             except Exception as e:
@@ -76,8 +77,9 @@ class TestInboundWorkflow:
             )
             lead_id = lead.id
             
-            # Load conversation history from DB for context
-            existing_convs = await db_manager.get_conversations_by_lead(lead_id, limit=20)
+            # Count existing messages BEFORE test
+            existing_convs = await db_manager.get_conversations_by_lead(lead_id, limit=100)
+            messages_before = len(existing_convs)
         
         # Build in-memory conversation history from DB
         conversation_history = []
@@ -88,9 +90,13 @@ class TestInboundWorkflow:
                 "timestamp": conv.timestamp.isoformat()
             })
         
+        # Track messages sent in THIS test
+        messages_sent = []
+        
         # Process each message in conversation
         for i, msg in enumerate(messages, 1):
             print(f"\n[Turn {i}] User: {msg}")
+            messages_sent.append({"role": "user", "content": msg})
             
             state = create_initial_state(
                 lead_id=str(lead_id),
@@ -102,7 +108,6 @@ class TestInboundWorkflow:
                     "name": lead.name
                 }
             )
-            # Pass in-memory history to workflow
             state["conversation_history"] = conversation_history
             
             # Run workflow
@@ -117,7 +122,9 @@ class TestInboundWorkflow:
             print(f"         Intent: {intent} (confidence: {intelligence.get('intent_confidence', 0):.2f})")
             print(f"         Actions: {actions}")
             
-            # Update in-memory history (runtime conversation state)
+            messages_sent.append({"role": "ai", "content": response})
+            
+            # Update in-memory history
             conversation_history.append({
                 "role": "user",
                 "content": msg,
@@ -143,9 +150,13 @@ class TestInboundWorkflow:
                         print(f"⚠️  Missing actions: {missing}")
                         success = False
                 
-                # Verify DB save
+                # Verify DB save - pass what we actually sent
                 if check_db:
-                    db_check = await self._verify_db(lead_id, len(existing_convs) + len(messages) * 2)
+                    db_check = await self._verify_db_dynamic(
+                        lead_id, 
+                        messages_before,
+                        messages_sent
+                    )
                     if not db_check:
                         print("⚠️  DB verification failed")
                         success = False
@@ -154,31 +165,49 @@ class TestInboundWorkflow:
                 print(f"\n{status}")
                 self.test_results.append((test_name, success, response))
                 return success
-    
-    async def _verify_db(self, lead_id: int, expected_count: int):
-        """Verify messages saved to DB"""
-        
+
+    async def _verify_db_dynamic(self, lead_id: int, messages_before: int, expected_messages: list):
+        """Verify DB matches what we actually sent"""
+        # import ipdb; ipdb.set_trace()
         async with AsyncSessionLocal() as db:
             db_manager = DBManager(db)
             
             conversations = await db_manager.get_conversations_by_lead(lead_id, limit=100)
-            actual_count = len(conversations)
+            print(f"Total messages in DB for lead {lead_id}: {len(conversations)} (before test: {messages_before})")
+            
+            # Get only NEW messages from this test
+            new_messages = conversations[messages_before:]
+            actual_count = len(new_messages)
+            expected_count = len(expected_messages)
+            # for i in new_messages:
+            #     print(f"  DB Msg: sender={i.sender}, message={i.message}")
+            
+            # for j in expected_messages:
+            #     print(f"  Expected Msg: role={j['role']}, content={j['content']}")
             
             print(f"\n📊 DB Check: {actual_count}/{expected_count} messages saved")
             
-            if actual_count < expected_count:
-                print(f"⚠️  Expected {expected_count}, found {actual_count}")
+            if actual_count != expected_count:
+                print(f"⚠️  Count mismatch")
                 return False
             
-            # Verify alternating user/ai pattern
-            for i, conv in enumerate(conversations[-expected_count:]):
-                expected_sender = "user" if i % 2 == 0 else "ai"
-                if conv.sender != expected_sender:
-                    print(f"⚠️  Message {i+1}: expected {expected_sender}, got {conv.sender}")
+            
+            # Verify each message matches what we sent
+            for i, (expected, actual) in enumerate(zip(expected_messages, new_messages)):
+                print(f"expected: {expected} actual: sender={actual.sender}, message={actual.message}")
+                expected_role = "user" if expected["role"] == "user" else "ai"
+                
+
+                if actual.sender != expected_role:
+                    return False
+                
+                if actual.message != expected["content"]:
+                    print(f"⚠️  Message {i+1}: content mismatch")
                     return False
             
+            print("✓ DB verification passed")
             return True
-    
+        
     # ========================================================================
     # TEST CASES
     # ========================================================================
@@ -188,7 +217,7 @@ class TestInboundWorkflow:
         await self._run_test(
             test_name="Simple Greeting",
             lead_phone="+11234567890",
-            messages=["Hi there!"],
+            messages=[" Hey there!"],
             expected_intent="greeting",
             expected_actions=[]
         )

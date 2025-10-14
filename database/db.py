@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.pool import NullPool, QueuePool
+from contextlib import asynccontextmanager
 import os
 
 # SQLite DB path
@@ -48,9 +49,18 @@ AsyncSessionLocal = sessionmaker(
 Base = declarative_base()
 
 # Initialize tables
+@asynccontextmanager
 async def get_db():
+    """Async context manager for database sessions"""
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 # Function to initialize the database
 async def init_db():

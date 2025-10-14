@@ -26,7 +26,7 @@ Final Answer: JSON response
 
 Required JSON:
 {{
-    "intent": "product_query|complaint|callback_request|etc",
+    "intent": "greeting|product_query|complaint|callback_request|general_inquiry|etc",
     "intent_confidence": 0.95,
     "entities": {{}},
     "sentiment": "positive|neutral|negative",
